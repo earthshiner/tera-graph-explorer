@@ -79,18 +79,26 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     CACHE_LIMIT = 4
 
     def html_for(seed_id, max_depth: int, full: bool = False,
-                 filter_key=None, filter_value=None) -> str:
+                 filter_key=None, filter_value=None,
+                 edge_filter_key=None, edge_filter_value=None) -> str:
         # Three states:
         #   1) empty: no seed and not full -> empty visualisation, prompt user
         #   2) bfs:   seed_id given        -> recursive CTE subgraph
         #   3) full:  full=True            -> entire graph
-        key = (seed_id, max_depth, full, filter_key, filter_value)
+        key = (seed_id, max_depth, full, filter_key, filter_value,
+               edge_filter_key, edge_filter_value)
         if key in cache:
             return cache[key]
         if seed_id is not None:
-            print(f"  BFS from node_id={seed_id}, max_depth={max_depth}, filter={filter_key}:{filter_value}…")
-            data = fetch_bfs_subgraph(conn, database, seed_id, max_depth,
-                                      filter_key, filter_value)
+            print(
+                f"  BFS from node_id={seed_id}, max_depth={max_depth}, "
+                f"node_filter={filter_key}:{filter_value}, "
+                f"edge_filter={edge_filter_key}:{edge_filter_value}…"
+            )
+            data = fetch_bfs_subgraph(
+                conn, database, seed_id, max_depth,
+                filter_key, filter_value, edge_filter_key, edge_filter_value
+            )
             print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
         elif full:
             print(f"  fetching full graph…")
@@ -126,10 +134,15 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 full = qs.get("full", ["0"])[0] in ("1", "true")
                 filter_key = qs.get("filter_key", [None])[0]
                 filter_value = qs.get("filter_value", [None])[0]
+                edge_filter_key = qs.get("edge_filter_key", [None])[0]
+                edge_filter_value = qs.get("edge_filter_value", [None])[0]
                 try:
-                    body = html_for(seed_id, max_depth, full=full,
-                                    filter_key=filter_key,
-                                    filter_value=filter_value).encode("utf-8")
+                    body = html_for(
+                        seed_id, max_depth, full=full,
+                        filter_key=filter_key, filter_value=filter_value,
+                        edge_filter_key=edge_filter_key,
+                        edge_filter_value=edge_filter_value,
+                    ).encode("utf-8")
                 except Exception as e:
                     self.send_error(500, f"Query failed: {e}")
                     return

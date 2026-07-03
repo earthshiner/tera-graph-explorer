@@ -1001,6 +1001,38 @@ function contextMenuButton(label, action) {
   return btn;
 }
 
+function contextMenuSelect(id, labelText, options) {
+  const field = document.createElement('div');
+  field.className = 'field';
+
+  const label = document.createElement('label');
+  label.htmlFor = id;
+  label.textContent = labelText;
+  field.appendChild(label);
+
+  const select = document.createElement('select');
+  select.id = id;
+  options.forEach(option => {
+    const opt = document.createElement('option');
+    opt.value = option.value;
+    opt.textContent = option.label;
+    if (option.filterValue != null) opt.dataset.filterValue = option.filterValue;
+    select.appendChild(opt);
+  });
+  field.appendChild(select);
+  nodeContextMenu.appendChild(field);
+  return select;
+}
+
+function incidentEdgeTypes(index) {
+  const types = new Set();
+  (incidentOf.get(index) || new Set()).forEach(edgeIndex => {
+    const type = data.links[edgeIndex]?.type;
+    if (type != null && type !== '') types.add(type);
+  });
+  return [...types].sort();
+}
+
 function showNodeContextMenu(index, x, y) {
   const node = data.nodes[index];
   if (!node) return;
@@ -1012,36 +1044,37 @@ function showNodeContextMenu(index, x, y) {
   title.textContent = node.label || `#${node.id}`;
   nodeContextMenu.appendChild(title);
 
-  const filterField = document.createElement('div');
-  filterField.className = 'field';
+  const nodeFilterSelect = contextMenuSelect(
+    'context-node-filter',
+    'Find actors by',
+    [
+      { value: 'community', label: 'Community', filterValue: node.community },
+      { value: 'category', label: 'Category', filterValue: node.category },
+      { value: 'role', label: 'Role', filterValue: node.role },
+    ].filter(option => option.filterValue != null && option.filterValue !== '')
+  );
 
-  const filterLabel = document.createElement('label');
-  filterLabel.htmlFor = 'context-filter';
-  filterLabel.textContent = 'Filter';
-  filterField.appendChild(filterLabel);
+  const relationshipOptions = [
+    { value: '', label: 'Any relationship' },
+    { value: 'strong', label: 'Strong relationships' },
+    ...incidentEdgeTypes(index).map(type => ({
+      value: 'edge_type',
+      label: `Relationship type: ${type}`,
+      filterValue: type,
+    })),
+  ];
+  const edgeFilterSelect = contextMenuSelect(
+    'context-edge-filter',
+    'Relationship evidence',
+    relationshipOptions
+  );
 
-  const filterSelect = document.createElement('select');
-  filterSelect.id = 'context-filter';
-  const filters = [
-    ['community', 'Community', node.community],
-    ['category', 'Category', node.category],
-    ['role', 'Role', node.role],
-  ].filter(([, , value]) => value != null && value !== '');
-
-  filters.forEach(([key, label, value]) => {
-    const opt = document.createElement('option');
-    opt.value = key;
-    opt.dataset.filterValue = value;
-    opt.textContent = label;
-    filterSelect.appendChild(opt);
-  });
-  filterField.appendChild(filterSelect);
-  nodeContextMenu.appendChild(filterField);
-
-  nodeContextMenu.appendChild(contextMenuButton('Drill with filter', () => {
-    const key = filterSelect.value;
-    const selected = filterSelect.selectedOptions[0];
-    drillIntoNode(index, key, selected?.dataset.filterValue);
+  nodeContextMenu.appendChild(contextMenuButton('Drill investigation', () => {
+    const nodeKey = nodeFilterSelect.value;
+    const nodeValue = nodeFilterSelect.selectedOptions[0]?.dataset.filterValue;
+    const edgeKey = edgeFilterSelect.value || undefined;
+    const edgeValue = edgeFilterSelect.selectedOptions[0]?.dataset.filterValue;
+    drillIntoNode(index, nodeKey, nodeValue, edgeKey, edgeValue);
   }));
 
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
@@ -1220,6 +1253,13 @@ searchInput.addEventListener('keydown', (ev) => {
 // ============================================================ //
 
 const labelLayer = document.getElementById('labels');
+const seedIndex = data._seed_id == null ? null : idIndex.get(data._seed_id);
+const seedHaloEl = seedIndex == null ? null : document.createElement('div');
+if (seedHaloEl) {
+  seedHaloEl.className = 'seed-halo';
+  seedHaloEl.title = 'Drill-down seed node';
+  labelLayer.appendChild(seedHaloEl);
+}
 
 // Pre-create one DOM element per node and per edge; toggle visibility via state
 const nodeLabelEls = data.nodes.map((n) => {
@@ -1253,6 +1293,19 @@ function projectAndUpdateLabels() {
 
   const showN = state.labels.nodes;
   const showE = state.labels.edges;
+
+  if (seedHaloEl && seedIndex != null) {
+    try {
+      const sp = graph.spaceToScreenPosition([
+        positions[seedIndex * 2],
+        positions[seedIndex * 2 + 1],
+      ]);
+      if (sp) {
+        seedHaloEl.style.display = 'block';
+        seedHaloEl.style.transform = `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
+      }
+    } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
+  }
 
   if (showN) {
     for (let i = 0; i < N; i++) {
@@ -1300,13 +1353,13 @@ function stopLabelLoop() {
 function setNodeLabelsVisible(show) {
   state.labels.nodes = show;
   nodeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
-  if (state.labels.nodes || state.labels.edges) startLabelLoop();
+  if (seedHaloEl || state.labels.nodes || state.labels.edges) startLabelLoop();
   else stopLabelLoop();
 }
 function setEdgeLabelsVisible(show) {
   state.labels.edges = show;
   edgeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
-  if (state.labels.nodes || state.labels.edges) startLabelLoop();
+  if (seedHaloEl || state.labels.nodes || state.labels.edges) startLabelLoop();
   else stopLabelLoop();
 }
 
@@ -1320,6 +1373,7 @@ document.getElementById('chk-edgeLabels').addEventListener('change', (ev) => {
 });
 setNodeLabelsVisible(state.labels.nodes);
 setEdgeLabelsVisible(state.labels.edges);
+if (seedHaloEl) startLabelLoop();
 
 // ============================================================ //
 //                       BFS RUNTIME RELOAD                     //
@@ -1537,6 +1591,8 @@ function navigateTo(seedId, maxDepth, opts) {
   u.searchParams.delete('full');
   u.searchParams.delete('filter_key');
   u.searchParams.delete('filter_value');
+  u.searchParams.delete('edge_filter_key');
+  u.searchParams.delete('edge_filter_value');
   if (seedId != null) {
     u.searchParams.set('seed_id', seedId);
     u.searchParams.set('max_depth', maxDepth);
@@ -1547,11 +1603,17 @@ function navigateTo(seedId, maxDepth, opts) {
     u.searchParams.set('filter_key', opts.filterKey);
     u.searchParams.set('filter_value', opts.filterValue);
   }
+  if (opts && opts.edgeFilterKey) {
+    u.searchParams.set('edge_filter_key', opts.edgeFilterKey);
+    if (opts.edgeFilterValue != null) {
+      u.searchParams.set('edge_filter_value', opts.edgeFilterValue);
+    }
+  }
   if (opts && opts.label) queueNextCrumb(opts.label);
   window.location.href = u.toString();
 }
 
-function drillIntoNode(index, filterKey, filterValue) {
+function drillIntoNode(index, filterKey, filterValue, edgeFilterKey, edgeFilterValue) {
   if (index == null) return;
   const node = data.nodes[index];
   if (!node) return;
@@ -1567,12 +1629,19 @@ function drillIntoNode(index, filterKey, filterValue) {
 
   const label = node.label || `#${node.id}`;
   const filterNames = { community: 'Community', category: 'Category', role: 'Role' };
+  const edgeFilterNames = {
+    edge_type: `relationship type (${edgeFilterValue})`,
+    strong: 'strong relationships',
+  };
   const filterLabel = filterKey ? ` same ${filterNames[filterKey] || filterKey} (${filterValue})` : '';
-  bfsErr.textContent = `Opening ${label}${filterLabel} at depth ${depth}...`;
+  const edgeLabel = edgeFilterKey ? ` via ${edgeFilterNames[edgeFilterKey] || edgeFilterKey}` : '';
+  bfsErr.textContent = `Opening ${label}${filterLabel}${edgeLabel} at depth ${depth}...`;
   navigateTo(node.id, depth, {
-    label: label + filterLabel + ' depth ' + depth,
+    label: label + filterLabel + edgeLabel + ' depth ' + depth,
     filterKey,
     filterValue,
+    edgeFilterKey,
+    edgeFilterValue,
   });
 }
 

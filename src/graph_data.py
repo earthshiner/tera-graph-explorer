@@ -12,6 +12,8 @@ FILTER_COLUMNS = {
     "category": "category",
     "role": "node_role",
 }
+EDGE_FILTER_KEYS = {"edge_type", "strong"}
+STRONG_EDGE_WEIGHT = 0.70
 
 
 def qualify_table(database: str, table: str) -> str:
@@ -32,6 +34,29 @@ def filter_column(filter_key: str | None) -> str | None:
         return FILTER_COLUMNS[filter_key]
     except KeyError as exc:
         raise ValueError("filter_key must be one of: community, category, role") from exc
+
+
+def validate_edge_filter(edge_filter_key: str | None) -> str | None:
+    """Return a validated optional graph_edges filter key."""
+    if not edge_filter_key:
+        return None
+    if edge_filter_key not in EDGE_FILTER_KEYS:
+        raise ValueError("edge_filter_key must be one of: edge_type, strong")
+    return edge_filter_key
+
+
+def edge_filter_sql(alias: str, edge_filter_key: str | None,
+                    edge_filter_value: str | None) -> tuple[str, tuple]:
+    """Build SQL and params for an optional relationship filter."""
+    key = validate_edge_filter(edge_filter_key)
+    prefix = f"{alias}." if alias else ""
+    if key == "edge_type":
+        if edge_filter_value is None:
+            raise ValueError("edge_filter_value is required for edge_type")
+        return f" AND {prefix}edge_type = ?", (edge_filter_value,)
+    if key == "strong":
+        return f" AND {prefix}edge_weight >= ?", (STRONG_EDGE_WEIGHT,)
+    return "", ()
 
 
 def fetch_full_graph(conn, database: str) -> dict:
@@ -56,7 +81,9 @@ def fetch_full_graph(conn, database: str) -> dict:
 
 def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
                        filter_key: str | None = None,
-                       filter_value: str | None = None) -> dict:
+                       filter_value: str | None = None,
+                       edge_filter_key: str | None = None,
+                       edge_filter_value: str | None = None) -> dict:
     """Recursive-CTE BFS from seed_id, capped at max_depth hops.
 
     Strategy:
@@ -80,6 +107,12 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
     node_table = qualify_table(database, "graph_nodes")
     edge_table = qualify_table(database, "graph_edges")
     filter_col = filter_column(filter_key)
+    bfs_edge_filter, bfs_edge_params = edge_filter_sql(
+        "e", edge_filter_key, edge_filter_value
+    )
+    final_edge_filter, final_edge_params = edge_filter_sql(
+        "", edge_filter_key, edge_filter_value
+    )
 
     bfs_sql = (
         "WITH RECURSIVE bfs (node_id, depth) AS (\n"
@@ -96,13 +129,14 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
         "    FROM bfs b\n"
         f"    JOIN {edge_table} e\n"
         "      ON e.source_id = b.node_id OR e.target_id = b.node_id\n"
-        f"    WHERE b.depth < {int(max_depth)}\n"
+        f"    WHERE b.depth < {int(max_depth)}"
+        f"{bfs_edge_filter}\n"
         ")\n"
         "SELECT DISTINCT node_id FROM bfs"
     )
 
     with conn.cursor() as cur:
-        cur.execute(bfs_sql)
+        cur.execute(bfs_sql, bfs_edge_params)
         visited_ids = {int(r[0]) for r in cur.fetchall()}
 
         if not visited_ids:
@@ -112,6 +146,8 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
                 "_total_nodes": 0, "_total_edges": 0,
                 "_database": database,
                 "_filter_key": filter_key, "_filter_value": filter_value,
+                "_edge_filter_key": edge_filter_key,
+                "_edge_filter_value": edge_filter_value,
             }
 
         ids_csv = ",".join(str(i) for i in visited_ids)
@@ -138,6 +174,8 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
                 f"FROM {edge_table} "
                 f"WHERE source_id IN ({filtered_ids_csv}) "
                 f"AND target_id IN ({filtered_ids_csv})"
+                f"{final_edge_filter}",
+                final_edge_params,
             )
             links = _read_edges(cur)
 
@@ -154,6 +192,8 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
     out["_database"] = database
     out["_filter_key"] = filter_key
     out["_filter_value"] = filter_value
+    out["_edge_filter_key"] = edge_filter_key
+    out["_edge_filter_value"] = edge_filter_value
     return out
 
 
