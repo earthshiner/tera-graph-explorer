@@ -577,6 +577,16 @@ HTML_TEMPLATE = r"""<!doctype html>
       <button id="btn-restart">Restart</button>
       <button id="btn-reset" class="primary">Reset layout</button>
     </div>
+    <div class="row-h">
+      <label for="sel-layout">Layout</label>
+      <select id="sel-layout">
+        <option value="community">Community clusters</option>
+        <option value="bfs">BFS rings</option>
+        <option value="category">Category columns</option>
+        <option value="role">Role lanes</option>
+        <option value="grid">Packed grid</option>
+      </select>
+    </div>
     <div class="field">
       <div class="field-head"><label for="s-gravity">Gravity</label>
                               <span class="val" id="v-gravity">0.25</span></div>
@@ -768,6 +778,7 @@ const state = {
              linkDistance: 10, friction: 0.85, decay: 2000 },
   nodes:   { colorBy: 'community', sizeScale: 0.3, opacity: 1.0 },
   edges:   { curved: true, arrows: false, widthScale: 1.0, opacity: 1.0 },
+  layout:  { mode: 'community' },
   search:  { query: '', matches: new Set() },
   focused:     null,                            // selected point index, or null
   hovered:     null,                            // hovered point index (transient)
@@ -782,6 +793,7 @@ function loadUiSettings() {
     if (saved.sim)    Object.assign(state.sim, saved.sim);
     if (saved.nodes)  Object.assign(state.nodes, saved.nodes);
     if (saved.edges)  Object.assign(state.edges, saved.edges);
+    if (saved.layout) Object.assign(state.layout, saved.layout);
     if (saved.labels) Object.assign(state.labels, saved.labels);
   } catch (_) { /* keep defaults */ }
 }
@@ -791,6 +803,7 @@ function saveUiSettings() {
     sim: state.sim,
     nodes: state.nodes,
     edges: state.edges,
+    layout: state.layout,
     labels: state.labels,
   }));
 }
@@ -809,10 +822,13 @@ function stableUnit(seed) {
   return x - Math.floor(x);
 }
 
-function seedPositions() {
-  const communities = colorMaps.community.values.length
-    ? colorMaps.community.values
-    : ['all'];
+function groupedValues(attr) {
+  const values = [...new Set(data.nodes.map(n => n[attr]).filter(v => v != null && v !== ''))].sort();
+  return values.length ? values : ['all'];
+}
+
+function placeCommunityClusters() {
+  const communities = groupedValues('community');
   const clusterCount = communities.length;
   const clusterIndex = new Map(communities.map((v, i) => [v, i]));
   const centreRadius = Math.max(260, Math.min(1200, 95 * Math.sqrt(clusterCount)));
@@ -830,6 +846,97 @@ function seedPositions() {
 
     pointPositions[i * 2]     = cx + Math.cos(jitterAngle) * jitterRadius * importancePull;
     pointPositions[i * 2 + 1] = cy + Math.sin(jitterAngle) * jitterRadius * importancePull;
+  }
+}
+
+function placeByAttributeColumns(attr) {
+  const groups = groupedValues(attr);
+  const groupIndex = new Map(groups.map((v, i) => [v, i]));
+  const buckets = groups.map(() => []);
+  data.nodes.forEach((n, i) => buckets[groupIndex.get(n[attr]) ?? 0].push(i));
+
+  const laneGap = attr === 'role' ? 260 : 300;
+  const cell = N > 5000 ? 22 : 34;
+  buckets.forEach((bucket, gi) => {
+    const x0 = (gi - (groups.length - 1) / 2) * laneGap;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(bucket.length / 1.8)));
+    bucket.forEach((nodeIndex, bi) => {
+      const col = bi % cols;
+      const row = Math.floor(bi / cols);
+      const xJitter = (stableUnit((data.nodes[nodeIndex].id || nodeIndex) + 91) - 0.5) * cell * 0.45;
+      const yJitter = (stableUnit((data.nodes[nodeIndex].id || nodeIndex) + 37) - 0.5) * cell * 0.45;
+      pointPositions[nodeIndex * 2] = x0 + (col - (cols - 1) / 2) * cell + xJitter;
+      pointPositions[nodeIndex * 2 + 1] = (row - bucket.length / Math.max(1, cols) / 2) * cell + yJitter;
+    });
+  });
+}
+
+function bfsLevels(seedIndex) {
+  const levels = new Int16Array(N);
+  levels.fill(-1);
+  const q = [seedIndex];
+  levels[seedIndex] = 0;
+  for (let qi = 0; qi < q.length; qi++) {
+    const current = q[qi];
+    neighborOf.get(current).forEach(next => {
+      if (levels[next] !== -1) return;
+      levels[next] = levels[current] + 1;
+      q.push(next);
+    });
+  }
+  return levels;
+}
+
+function placeBfsRings() {
+  const seedIndex = idIndex.get(data._seed_id) ??
+    data.nodes.reduce((best, _, i) => nodeDegrees[i] > nodeDegrees[best] ? i : best, 0);
+  const levels = bfsLevels(seedIndex);
+  const rings = new Map();
+  for (let i = 0; i < N; i++) {
+    const level = levels[i] < 0 ? 7 : Math.min(levels[i], 6);
+    if (!rings.has(level)) rings.set(level, []);
+    rings.get(level).push(i);
+  }
+
+  pointPositions[seedIndex * 2] = 0;
+  pointPositions[seedIndex * 2 + 1] = 0;
+  [...rings.entries()].forEach(([level, indexes]) => {
+    if (level === 0) return;
+    const radius = level === 7 ? 1560 : 130 + level * 210;
+    indexes.forEach((nodeIndex, pos) => {
+      const base = (Math.PI * 2 * pos) / Math.max(1, indexes.length);
+      const angle = base + stableUnit((data.nodes[nodeIndex].id || nodeIndex) + level * 19) * 0.18;
+      const jitter = (stableUnit((data.nodes[nodeIndex].id || nodeIndex) + 71) - 0.5) * 42;
+      pointPositions[nodeIndex * 2] = Math.cos(angle) * (radius + jitter);
+      pointPositions[nodeIndex * 2 + 1] = Math.sin(angle) * (radius + jitter);
+    });
+  });
+}
+
+function placePackedGrid() {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+  const cell = N > 5000 ? 18 : 28;
+  data.nodes.forEach((n, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const jitterX = (stableUnit((n.id || i) + 13) - 0.5) * cell * 0.35;
+    const jitterY = (stableUnit((n.id || i) + 29) - 0.5) * cell * 0.35;
+    pointPositions[i * 2] = (col - (cols - 1) / 2) * cell + jitterX;
+    pointPositions[i * 2 + 1] = (row - Math.ceil(N / cols) / 2) * cell + jitterY;
+  });
+}
+
+function seedPositions() {
+  if (state.layout.mode === 'bfs' && N > 0) {
+    placeBfsRings();
+  } else if (state.layout.mode === 'category') {
+    placeByAttributeColumns('category');
+  } else if (state.layout.mode === 'role') {
+    placeByAttributeColumns('role');
+  } else if (state.layout.mode === 'grid') {
+    placePackedGrid();
+  } else {
+    placeCommunityClusters();
   }
 }
 seedPositions();
@@ -1607,13 +1714,19 @@ document.getElementById('btn-restart').onclick = () => {
   paused = false; btnPause.textContent = 'Pause';
   graph.start(1.0);
 };
-document.getElementById('btn-reset').onclick = () => {
+function applyLayout({ fit = true, restart = true } = {}) {
   seedPositions();
   graph.setPointPositions(pointPositions);
-  paused = false; btnPause.textContent = 'Pause';
-  graph.start(1.0);
-  setTimeout(() => graph.fitView(750), 600);
-};
+  if (restart) {
+    paused = false; btnPause.textContent = 'Pause';
+    graph.start(1.0);
+  } else {
+    pokeRender();
+  }
+  if (fit) setTimeout(() => graph.fitView(750), 120);
+}
+
+document.getElementById('btn-reset').onclick = () => applyLayout();
 
 function bindSlider(sliderId, valueId, getter, setter, onChange) {
   const slider = document.getElementById(sliderId);
@@ -1631,6 +1744,9 @@ function bindSlider(sliderId, valueId, getter, setter, onChange) {
   });
 }
 
+const layoutSelect = document.getElementById('sel-layout');
+if (![...layoutSelect.options].some(opt => opt.value === state.layout.mode)) state.layout.mode = 'community';
+layoutSelect.value = state.layout.mode;
 document.getElementById('sel-colorBy').value = state.nodes.colorBy;
 document.getElementById('chk-curved').checked = state.edges.curved;
 document.getElementById('chk-arrows').checked = state.edges.arrows;
@@ -1660,6 +1776,12 @@ bindSlider('s-widthScale',  'v-widthScale',
   () => state.edges.widthScale, (v) => state.edges.widthScale = v, applyLinkWidthScale);
 bindSlider('s-edgeOpacity', 'v-edgeOpacity',
   () => state.edges.opacity,    (v) => state.edges.opacity    = v, applyLinkOpacity);
+
+layoutSelect.addEventListener('change', (ev) => {
+  state.layout.mode = ev.target.value;
+  applyLayout();
+  saveUiSettings();
+});
 
 document.getElementById('sel-colorBy').addEventListener('change', (ev) => {
   state.nodes.colorBy = ev.target.value;
