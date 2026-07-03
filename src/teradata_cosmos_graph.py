@@ -662,8 +662,12 @@ function showFatalError(message) {
   e.textContent = message;
 }
 
+const RENDERER_NOTICE_KEY = 'tera-graph-renderer-notice-seen-v1';
 let noticeTimer = null;
 function showRendererNotice(message) {
+  if (sessionStorage.getItem(RENDERER_NOTICE_KEY) === '1') return;
+  sessionStorage.setItem(RENDERER_NOTICE_KEY, '1');
+
   const notice = document.getElementById('notice');
   const noticeText = document.getElementById('notice-text');
   const close = document.getElementById('notice-close');
