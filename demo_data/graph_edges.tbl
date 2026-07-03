@@ -1,0 +1,15 @@
+CREATE MULTISET TABLE graph_demo_db.graph_edges ,FALLBACK ,
+     NO BEFORE JOURNAL,
+     NO AFTER JOURNAL,
+     CHECKSUM = DEFAULT,
+     DEFAULT MERGEBLOCKRATIO,
+     MAP = TD_MAP1
+     (
+      edge_id INTEGER NOT NULL,
+      source_id INTEGER NOT NULL,
+      target_id INTEGER NOT NULL,
+      edge_weight DECIMAL(5,3),
+      edge_type VARCHAR(50) CHARACTER SET UNICODE NOT CASESPECIFIC,
+      strength VARCHAR(20) CHARACTER SET UNICODE NOT CASESPECIFIC,
+      created_dt DATE FORMAT 'YYYY-MM-DD')
+PRIMARY INDEX ( edge_id );
