@@ -571,6 +571,7 @@ class CanvasFallbackGraph {
     this.canvas.addEventListener('mousemove', (ev) => this.onMove(ev));
     this.canvas.addEventListener('mouseleave', () => this.onLeave());
     this.canvas.addEventListener('click', (ev) => this.onClick(ev));
+    this.canvas.addEventListener('dblclick', (ev) => this.onDoubleClick(ev));
     this.canvas.addEventListener('contextmenu', (ev) => this.onContextMenu(ev));
     this.canvas.addEventListener('wheel', (ev) => this.onWheel(ev), { passive: false });
     this.canvas.addEventListener('mousedown', (ev) => this.onDown(ev));
@@ -672,6 +673,14 @@ class CanvasFallbackGraph {
   onClick(ev) {
     const i = this.pickPoint(ev);
     if (this.config.onClick) this.config.onClick(i);
+  }
+
+  onDoubleClick(ev) {
+    ev.preventDefault();
+    const i = this.pickPoint(ev);
+    if (i != null && this.config.onPointDoubleClick) {
+      this.config.onPointDoubleClick(i, ev);
+    }
   }
 
   onContextMenu(ev) {
@@ -859,6 +868,10 @@ const initialConfig = {
     }
     setFocused(index ?? null);
   },
+  onPointDoubleClick: (index) => {
+    hideNodeContextMenu();
+    drillIntoNode(index);
+  },
   onPointContextMenu: (index, ev) => {
     showNodeContextMenu(index, ev.clientX, ev.clientY);
   },
@@ -903,6 +916,14 @@ try {
   );
   graph = new CanvasFallbackGraph(div, initialConfig);
 }
+
+div.addEventListener('dblclick', (ev) => {
+  const index = state.hovered;
+  if (index == null) return;
+  ev.preventDefault();
+  hideNodeContextMenu();
+  drillIntoNode(index);
+});
 
 div.addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
@@ -1001,25 +1022,26 @@ function showNodeContextMenu(index, x, y) {
 
   const filterSelect = document.createElement('select');
   filterSelect.id = 'context-filter';
-  [
-    ['', 'No value', null],
+  const filters = [
     ['community', 'Community', node.community],
     ['category', 'Category', node.category],
     ['role', 'Role', node.role],
-  ].forEach(([key, label, value]) => {
+  ].filter(([, , value]) => value != null && value !== '');
+
+  filters.forEach(([key, label, value]) => {
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = value == null || value === '' ? label : `${label}: ${value}`;
-    opt.disabled = key !== '' && (value == null || value === '');
+    opt.dataset.filterValue = value;
+    opt.textContent = label;
     filterSelect.appendChild(opt);
   });
   filterField.appendChild(filterSelect);
   nodeContextMenu.appendChild(filterField);
 
-  nodeContextMenu.appendChild(contextMenuButton('Drill into node', () => {
+  nodeContextMenu.appendChild(contextMenuButton('Drill with filter', () => {
     const key = filterSelect.value;
-    const values = { community: node.community, category: node.category, role: node.role };
-    drillIntoNode(index, key || undefined, key ? values[key] : undefined);
+    const selected = filterSelect.selectedOptions[0];
+    drillIntoNode(index, key, selected?.dataset.filterValue);
   }));
 
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
@@ -1544,7 +1566,8 @@ function drillIntoNode(index, filterKey, filterValue) {
   }
 
   const label = node.label || `#${node.id}`;
-  const filterLabel = filterKey ? ` (${filterKey}: ${filterValue})` : '';
+  const filterNames = { community: 'Community', category: 'Category', role: 'Role' };
+  const filterLabel = filterKey ? ` same ${filterNames[filterKey] || filterKey} (${filterValue})` : '';
   bfsErr.textContent = `Opening ${label}${filterLabel} at depth ${depth}...`;
   navigateTo(node.id, depth, {
     label: label + filterLabel + ' depth ' + depth,

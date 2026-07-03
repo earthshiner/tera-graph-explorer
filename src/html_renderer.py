@@ -44,7 +44,7 @@ __STYLE__
 <div id="empty-state" class="panel" style="display: none;">
   <div class="empty-icon">→</div>
   <h2>Awaiting input</h2>
-  <p>Select a depth in the panel on the right, then right-click a node to drill down into its relationship neighbourhood.</p>
+  <p>Select a depth in the panel on the right, then double-click a node to drill down or right-click to drill with a filter.</p>
   <p>Or click <strong>Full graph</strong> to load every node and edge in <code>__DATABASE__</code> (slow at 100k+).</p>
 </div>
 
@@ -53,7 +53,7 @@ __STYLE__
   <div class="text">
     <h1>__DATABASE__</h1>
     <div class="stats" id="stats">loading…</div>
-    <div class="hint">Drag · Scroll to zoom · Hover nodes/edges for details · Right-click a node to drill-down</div>
+    <div class="hint">Drag · Scroll to zoom · Hover for details · Double-click to drill · Right-click for filters</div>
   </div>
 </div>
 
