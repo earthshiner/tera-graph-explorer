@@ -757,34 +757,51 @@ class CanvasFallbackGraph {
       const dy = ty - sy;
       const stroke = this.rgba(this.linkColors, i, linkOpacity);
       const width = Math.max(0.4, (this.linkWidths[i] || 1) * (this.config.linkWidthScale || 1) / this.scale);
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
+      const targetRadius = Math.max(2 / this.scale, (this.sizes[t] || 4) * (this.config.pointSizeScale || 1));
+      const sourceRadius = Math.max(2 / this.scale, (this.sizes[s] || 4) * (this.config.pointSizeScale || 1));
+      const straightAngle = Math.atan2(dy, dx);
+      const startX = sx + Math.cos(straightAngle) * sourceRadius;
+      const startY = sy + Math.sin(straightAngle) * sourceRadius;
+
+      let endAngle = straightAngle;
+      let endX = tx - Math.cos(endAngle) * targetRadius;
+      let endY = ty - Math.sin(endAngle) * targetRadius;
+      let cx = null, cy = null;
+
       if (this.config.curvedLinks) {
         const bend = 0.16;
-        const cx = (sx + tx) / 2 - dy * bend;
-        const cy = (sy + ty) / 2 + dx * bend;
-        ctx.quadraticCurveTo(cx, cy, tx, ty);
+        cx = (sx + tx) / 2 - dy * bend;
+        cy = (sy + ty) / 2 + dx * bend;
+        endAngle = Math.atan2(ty - cy, tx - cx);
+        endX = tx - Math.cos(endAngle) * targetRadius;
+        endY = ty - Math.sin(endAngle) * targetRadius;
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      if (this.config.curvedLinks) {
+        ctx.quadraticCurveTo(cx, cy, endX, endY);
       } else {
-        ctx.lineTo(tx, ty);
+        ctx.lineTo(endX, endY);
       }
       ctx.strokeStyle = stroke;
       ctx.lineWidth = width;
       ctx.stroke();
 
       if (this.config.linkArrows || this.config.renderLinkArrows) {
-        const angle = Math.atan2(ty - sy, tx - sx);
-        const nodeRadius = Math.max(2 / this.scale, (this.sizes[t] || 4) * (this.config.pointSizeScale || 1));
-        const arrowLen = Math.max(4 / this.scale, 8 / this.scale);
-        const ax = tx - Math.cos(angle) * nodeRadius;
-        const ay = ty - Math.sin(angle) * nodeRadius;
+        const arrowLen = Math.max(7 / this.scale, 12 / this.scale);
+        const arrowHalf = arrowLen * 0.48;
+        const backX = endX - Math.cos(endAngle) * arrowLen;
+        const backY = endY - Math.sin(endAngle) * arrowLen;
+        const perpX = -Math.sin(endAngle) * arrowHalf;
+        const perpY = Math.cos(endAngle) * arrowHalf;
         ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax - Math.cos(angle - 0.42) * arrowLen, ay - Math.sin(angle - 0.42) * arrowLen);
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax - Math.cos(angle + 0.42) * arrowLen, ay - Math.sin(angle + 0.42) * arrowLen);
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = width;
-        ctx.stroke();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(backX + perpX, backY + perpY);
+        ctx.lineTo(backX - perpX, backY - perpY);
+        ctx.closePath();
+        ctx.fillStyle = stroke;
+        ctx.fill();
       }
     }
 
