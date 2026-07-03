@@ -1,8 +1,6 @@
-"""
-teradata_cosmos_graph.py
-========================
+"""========================
 
-Pull graph data from Teradata's `graph_demo_db` and render it as an
+Pull graph data from a Teradata database and render it as an
 interactive, GPU-accelerated graph using the cosmos.gl engine, themed with
 official Teradata brand colours and the embedded "t." symbol logo.
 
@@ -23,10 +21,11 @@ Run (static, full graph):
     export TD_HOST=your-td-host.example.com
     export TD_USER=your_user
     export TD_PASSWORD=your_password
+    export TD_DATABASE=Playpen
     python teradata_cosmos_graph.py
 
 Run (static, BFS subgraph from a specific node):
-    python teradata_cosmos_graph.py --seed-id 12345 --max-depth 2
+    python teradata_cosmos_graph.py --database Playpen --seed-id 12345 --max-depth 2
 
 Run (server mode — recommended for large graphs):
     python teradata_cosmos_graph.py serve
@@ -37,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import webbrowser
 from pathlib import Path
@@ -47,28 +47,41 @@ except ImportError:
     sys.exit("Missing dependency. Install with:  pip install teradatasql")
 
 
-NODE_QUERY = """
-    SELECT node_id, node_label, category, community, importance, node_role
-    FROM graph_demo_db.graph_nodes
-"""
-
-EDGE_QUERY = """
-    SELECT source_id, target_id, edge_weight, edge_type, strength
-    FROM graph_demo_db.graph_edges
-"""
+DEFAULT_DATABASE = "Playpen"
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]*$")
 
 
-def fetch_full_graph(conn) -> dict:
-    """Original behaviour: pull every node and edge."""
+def qualify_table(database: str, table: str) -> str:
+    """Return a validated fully qualified table name for dynamic SQL."""
+    if not _IDENTIFIER_RE.fullmatch(database):
+        raise ValueError(
+            "database must be an unquoted Teradata identifier "
+            "using letters, numbers, _, $, or #"
+        )
+    return f"{database}.{table}"
+
+
+def fetch_full_graph(conn, database: str) -> dict:
+    """Pull every node and edge from the configured graph database."""
+    node_table = qualify_table(database, "graph_nodes")
+    edge_table = qualify_table(database, "graph_edges")
     with conn.cursor() as cur:
-        cur.execute(NODE_QUERY)
+        cur.execute(
+            "SELECT node_id, node_label, category, community, importance, node_role "
+            f"FROM {node_table}"
+        )
         nodes = _read_nodes(cur)
-        cur.execute(EDGE_QUERY)
+        cur.execute(
+            "SELECT source_id, target_id, edge_weight, edge_type, strength "
+            f"FROM {edge_table}"
+        )
         links = _read_edges(cur)
-    return _validate(nodes, links)
+    out = _validate(nodes, links)
+    out["_database"] = database
+    return out
 
 
-def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
+def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int) -> dict:
     """Recursive-CTE BFS from seed_id, capped at max_depth hops.
 
     Strategy:
@@ -89,10 +102,13 @@ def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
     if max_depth < 1 or max_depth > 6:
         raise ValueError("max_depth must be between 1 and 6")
 
+    node_table = qualify_table(database, "graph_nodes")
+    edge_table = qualify_table(database, "graph_edges")
+
     bfs_sql = (
         "WITH RECURSIVE bfs (node_id, depth) AS (\n"
         "    SELECT node_id, 0\n"
-        "    FROM graph_demo_db.graph_nodes\n"
+        f"    FROM {node_table}\n"
         f"    WHERE node_id = {int(seed_id)}\n"
         "    UNION ALL\n"
         "    SELECT\n"
@@ -102,7 +118,7 @@ def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
         "        END,\n"
         "        b.depth + 1\n"
         "    FROM bfs b\n"
-        "    JOIN graph_demo_db.graph_edges e\n"
+        f"    JOIN {edge_table} e\n"
         "      ON e.source_id = b.node_id OR e.target_id = b.node_id\n"
         f"    WHERE b.depth < {int(max_depth)}\n"
         ")\n"
@@ -118,6 +134,7 @@ def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
                 "nodes": [], "links": [],
                 "_seed_id": seed_id, "_max_depth": max_depth,
                 "_total_nodes": 0, "_total_edges": 0,
+                "_database": database,
             }
 
         ids_csv = ",".join(str(i) for i in visited_ids)
@@ -125,20 +142,20 @@ def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
         cur.execute(
             "SELECT node_id, node_label, category, community, "
             "       importance, node_role "
-            f"FROM graph_demo_db.graph_nodes WHERE node_id IN ({ids_csv})"
+            f"FROM {node_table} WHERE node_id IN ({ids_csv})"
         )
         nodes = _read_nodes(cur)
 
         cur.execute(
             "SELECT source_id, target_id, edge_weight, edge_type, strength "
-            "FROM graph_demo_db.graph_edges "
+            f"FROM {edge_table} "
             f"WHERE source_id IN ({ids_csv}) AND target_id IN ({ids_csv})"
         )
         links = _read_edges(cur)
 
-        cur.execute("SELECT COUNT(*) FROM graph_demo_db.graph_nodes")
+        cur.execute(f"SELECT COUNT(*) FROM {node_table}")
         total_nodes = int(cur.fetchone()[0])
-        cur.execute("SELECT COUNT(*) FROM graph_demo_db.graph_edges")
+        cur.execute(f"SELECT COUNT(*) FROM {edge_table}")
         total_edges = int(cur.fetchone()[0])
 
     out = _validate(nodes, links)
@@ -146,17 +163,19 @@ def fetch_bfs_subgraph(conn, seed_id: int, max_depth: int) -> dict:
     out["_max_depth"]   = max_depth
     out["_total_nodes"] = total_nodes
     out["_total_edges"] = total_edges
+    out["_database"] = database
     return out
 
 
-def resolve_seed_label(conn, label: str) -> "int | None":
+def resolve_seed_label(conn, database: str, label: str) -> "int | None":
     """Look up a node_id by exact-match node_label (first hit wins)."""
+    node_table = qualify_table(database, "graph_nodes")
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT node_id FROM graph_demo_db.graph_nodes "
+            "SELECT node_id "
+            f"FROM {node_table} "
             "WHERE node_label = ? "
-            "ORDER BY node_id "
-            "FETCH FIRST 1 ROW ONLY",
+            "QUALIFY ROW_NUMBER() OVER (ORDER BY node_id) = 1",
             (label,),
         )
         row = cur.fetchone()
@@ -207,7 +226,8 @@ HTML_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>graph_demo_db · Teradata Graph Explorer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__DATABASE__ · Teradata Graph Explorer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet"
@@ -261,7 +281,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   }
 
   .panel { background: var(--panel); border: 1px solid var(--border);
-           border-radius: 8px; backdrop-filter: blur(10px); }
+           border-radius: 8px; -webkit-backdrop-filter: blur(10px);
+           backdrop-filter: blur(10px); }
 
   #info  { position: absolute; top: 16px; left: 16px; max-width: 300px;
            padding: 14px 16px; z-index: 10; display: flex; gap: 12px;
@@ -377,6 +398,15 @@ HTML_TEMPLATE = r"""<!doctype html>
            padding: 16px 20px; background: #2a1a1a; border: 1px solid #5a2a2a;
            border-radius: 8px; color: #ffb4b4; font-family: monospace;
            max-width: 600px; display: none; z-index: 100; }
+  #notice { position: absolute; top: 14px; left: 332px; right: 336px;
+            display: none; align-items: center; justify-content: space-between;
+            gap: 12px; padding: 8px 10px; background: rgba(16, 45, 66, 0.92);
+            border: 1px solid var(--border); border-radius: 6px;
+            color: #d7ecff; font-family: monospace; font-size: 11px;
+            line-height: 1.3; z-index: 30; box-shadow: 0 4px 16px rgba(0,0,0,0.28); }
+  #notice button { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px;
+                   border: 1px solid var(--border); background: var(--td-navy);
+                   color: var(--text); cursor: pointer; line-height: 18px; padding: 0; }
 
   *::-webkit-scrollbar { width: 8px; height: 8px; }
   *::-webkit-scrollbar-track { background: transparent; }
@@ -388,6 +418,14 @@ HTML_TEMPLATE = r"""<!doctype html>
   #bfs-status #bfs-mode { color: var(--td-orange); font-weight: 600;
                           text-transform: uppercase; letter-spacing: 0.5px; }
   #bfs-status #bfs-stats { color: var(--text); font-variant-numeric: tabular-nums; }
+  #bfs-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+                    margin-top: 8px; padding: 6px 8px; background: rgba(0, 35, 60, 0.55);
+                    border: 1px solid var(--border-light); border-radius: 5px;
+                    font-size: 11px; line-height: 1.4; }
+  #bfs-breadcrumb a { color: var(--text-dim); text-decoration: none; cursor: pointer; }
+  #bfs-breadcrumb a:hover { color: var(--td-orange); }
+  #bfs-breadcrumb .sep { color: var(--muted); }
+  #bfs-breadcrumb .current { color: var(--td-orange); font-weight: 600; }
   #bfs-error { font-size: 11px; color: #ffb4b4; margin-top: 6px;
                min-height: 14px; }
 
@@ -421,16 +459,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 <div id="empty-state" class="panel" style="display: none;">
   <div class="empty-icon">→</div>
   <h2>Awaiting input</h2>
-  <p>Enter a seed node label or <code>#id</code> in the panel on the right and click <strong>Search</strong> to explore connections from that node.</p>
-  <p>Or click <strong>Full graph</strong> to load every node and edge in <code>graph_demo_db</code> (slow at 100k+).</p>
+  <p>Select a depth in the panel on the right, then click any node to drill into its relationship neighbourhood.</p>
+  <p>Or click <strong>Full graph</strong> to load every node and edge in <code>__DATABASE__</code> (slow at 100k+).</p>
 </div>
 
 <div id="info" class="panel">
   <img src="__LOGO_URI__" alt="Teradata">
   <div class="text">
-    <h1>graph_demo_db</h1>
+    <h1>__DATABASE__</h1>
     <div class="stats" id="stats">loading…</div>
-    <div class="hint">Drag · Scroll to zoom · Hover nodes/edges for details · Click to focus</div>
+    <div class="hint">Drag · Scroll to zoom · Hover nodes/edges for details · Click a node to drill</div>
   </div>
 </div>
 
@@ -447,6 +485,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <span id="bfs-mode">full graph</span>
       <span id="bfs-stats"></span>
     </div>
+    <div id="bfs-breadcrumb"></div>
     <div class="row-h" style="margin-top: 10px;">
       <label for="bfs-seed">Seed</label>
       <input id="bfs-seed" type="text" placeholder="Node label or #id"
@@ -460,7 +499,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <input id="bfs-depth" type="range" min="1" max="6" step="1" value="2">
     </div>
     <div class="btn-row">
-      <button id="btn-bfs-run" class="primary">Search</button>
+      <button id="btn-bfs-run" class="primary">Open seed</button>
       <button id="btn-bfs-reset">Full graph</button>
     </div>
     <div id="bfs-error"></div>
@@ -557,17 +596,59 @@ HTML_TEMPLATE = r"""<!doctype html>
 </aside>
 
 <div id="tooltip"></div>
+<div id="notice"><span id="notice-text"></span><button id="notice-close" title="Dismiss">×</button></div>
 <div id="error"></div>
 
 <script type="module">
-let Graph;
-try {
-  ({ Graph } = await import('https://cdn.jsdelivr.net/npm/@cosmos.gl/graph@2/+esm'));
-} catch (err) {
+function showFatalError(message) {
   const e = document.getElementById('error');
   e.style.display = 'block';
-  e.textContent = 'Failed to load cosmos.gl from CDN: ' + err.message;
-  throw err;
+  e.textContent = message;
+}
+
+let noticeTimer = null;
+function showRendererNotice(message) {
+  const notice = document.getElementById('notice');
+  const noticeText = document.getElementById('notice-text');
+  const close = document.getElementById('notice-close');
+  noticeText.textContent = message;
+  notice.style.display = 'flex';
+  close.onclick = () => {
+    notice.style.display = 'none';
+    if (noticeTimer != null) clearTimeout(noticeTimer);
+  };
+  if (noticeTimer != null) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    notice.style.display = 'none';
+    noticeTimer = null;
+  }, 6000);
+}
+
+function supportsRequiredWebGL() {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!canvas.getContext('webgl2', { failIfMajorPerformanceCaveat: false });
+  } catch (_) {
+    return false;
+  }
+}
+
+const HAS_WEBGL = supportsRequiredWebGL();
+let Graph = null;
+if (HAS_WEBGL) {
+  try {
+    ({ Graph } = await import('https://cdn.jsdelivr.net/npm/@cosmos.gl/graph@2/+esm'));
+  } catch (err) {
+    showRendererNotice(
+      'Canvas fallback active: cosmos.gl could not be loaded. ' +
+      'Click a node to drill into its subgraph.'
+    );
+  }
+} else {
+  showRendererNotice(
+    'Canvas fallback active: WebGL2 is unavailable in this browser session. ' +
+    'Click a node to drill into its subgraph.'
+  );
 }
 
 const data = __DATA__;
@@ -637,10 +718,32 @@ const linksArr       = new Float32Array(L * 2);
 const linkColors     = new Float32Array(L * 4);
 const linkWidths     = new Float32Array(L);
 
+function stableUnit(seed) {
+  let x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 function seedPositions() {
+  const communities = colorMaps.community.values.length
+    ? colorMaps.community.values
+    : ['all'];
+  const clusterCount = communities.length;
+  const clusterIndex = new Map(communities.map((v, i) => [v, i]));
+  const centreRadius = Math.max(260, Math.min(1200, 95 * Math.sqrt(clusterCount)));
+  const clusterRadius = N > 5000 ? 170 : 115;
+
   for (let i = 0; i < N; i++) {
-    pointPositions[i * 2]     = Math.random() * 1000;
-    pointPositions[i * 2 + 1] = Math.random() * 1000;
+    const n = data.nodes[i];
+    const ci = clusterIndex.get(n.community) ?? 0;
+    const centreAngle = (Math.PI * 2 * ci) / Math.max(1, clusterCount);
+    const cx = Math.cos(centreAngle) * centreRadius;
+    const cy = Math.sin(centreAngle) * centreRadius;
+    const jitterAngle = stableUnit((n.id || i) + 17) * Math.PI * 2;
+    const jitterRadius = Math.sqrt(stableUnit((n.id || i) + 53)) * clusterRadius;
+    const importancePull = 1 - Math.min(0.85, (n.importance || 0.5) * 0.45);
+
+    pointPositions[i * 2]     = cx + Math.cos(jitterAngle) * jitterRadius * importancePull;
+    pointPositions[i * 2 + 1] = cy + Math.sin(jitterAngle) * jitterRadius * importancePull;
   }
 }
 seedPositions();
@@ -906,6 +1009,216 @@ function showEdgeTooltip(i) {
 
 function hideTooltip() { tooltip.style.display = 'none'; }
 
+// ---- Canvas fallback for browser sessions without WebGL2 ---- //
+class CanvasFallbackGraph {
+  constructor(container, config) {
+    this.container = container;
+    this.config = { ...config };
+    this.canvas = document.createElement('canvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.container.appendChild(this.canvas);
+    this.positions = new Float32Array(0);
+    this.sizes = new Float32Array(0);
+    this.pointColors = new Float32Array(0);
+    this.links = new Float32Array(0);
+    this.linkColors = new Float32Array(0);
+    this.linkWidths = new Float32Array(0);
+    this.focused = null;
+    this.hovered = null;
+    this.scale = 1;
+    this.offsetX = 0;
+    this.offsetY = 0;
+    this.dragging = false;
+    this.lastPointer = null;
+
+    addEventListener('resize', () => this.resize());
+    this.canvas.addEventListener('mousemove', (ev) => this.onMove(ev));
+    this.canvas.addEventListener('mouseleave', () => this.onLeave());
+    this.canvas.addEventListener('click', (ev) => this.onClick(ev));
+    this.canvas.addEventListener('wheel', (ev) => this.onWheel(ev), { passive: false });
+    this.canvas.addEventListener('mousedown', (ev) => this.onDown(ev));
+    addEventListener('mouseup', () => this.onUp());
+    addEventListener('mousemove', (ev) => this.onDrag(ev));
+    this.resize();
+  }
+
+  resize() {
+    const rect = this.container.getBoundingClientRect();
+    const ratio = Math.min(devicePixelRatio || 1, 2);
+    this.canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+    this.canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+    this.canvas.style.width = rect.width + 'px';
+    this.canvas.style.height = rect.height + 'px';
+    this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.render();
+  }
+
+  setPointPositions(v) { this.positions = v; }
+  setPointSizes(v) { this.sizes = v; }
+  setPointColors(v) { this.pointColors = v; this.render(); }
+  setLinks(v) { this.links = v; }
+  setLinkColors(v) { this.linkColors = v; this.render(); }
+  setLinkWidths(v) { this.linkWidths = v; this.render(); }
+  setConfig(cfg) { this.config = { ...this.config, ...cfg }; this.render(); }
+  start() { this.render(); }
+  pause() { this.render(); }
+  getPointPositions() { return this.positions; }
+  setFocusedPointByIndex(i) { this.focused = (i == null) ? null : i; this.render(); }
+
+  fitView() {
+    if (!N) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < N; i++) {
+      const x = this.positions[i * 2], y = this.positions[i * 2 + 1];
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    const rect = this.container.getBoundingClientRect();
+    const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+    this.scale = Math.min(rect.width / spanX, rect.height / spanY) * 0.84;
+    this.offsetX = (rect.width - spanX * this.scale) / 2 - minX * this.scale;
+    this.offsetY = (rect.height - spanY * this.scale) / 2 - minY * this.scale;
+    this.render();
+  }
+
+  zoomToPointByIndex(i, duration, zoomScale) {
+    if (i == null || i < 0 || i >= N) return;
+    const rect = this.container.getBoundingClientRect();
+    this.scale = Math.max(this.scale, zoomScale || 3);
+    this.offsetX = rect.width / 2 - this.positions[i * 2] * this.scale;
+    this.offsetY = rect.height / 2 - this.positions[i * 2 + 1] * this.scale;
+    this.render();
+  }
+
+  spaceToScreenPosition(pos) {
+    return [pos[0] * this.scale + this.offsetX, pos[1] * this.scale + this.offsetY];
+  }
+
+  screenToSpace(x, y) {
+    return [(x - this.offsetX) / this.scale, (y - this.offsetY) / this.scale];
+  }
+
+  pickPoint(ev) {
+    const rect = this.canvas.getBoundingClientRect();
+    const [sx, sy] = this.screenToSpace(ev.clientX - rect.left, ev.clientY - rect.top);
+    let best = null, bestD = Infinity;
+    const maxScreenD = 11;
+    const maxSpaceD = maxScreenD / Math.max(this.scale, 0.001);
+    for (let i = 0; i < N; i++) {
+      const dx = this.positions[i * 2] - sx;
+      const dy = this.positions[i * 2 + 1] - sy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD && d <= maxSpaceD * maxSpaceD) {
+        best = i; bestD = d;
+      }
+    }
+    return best;
+  }
+
+  onMove(ev) {
+    if (this.dragging) return;
+    const i = this.pickPoint(ev);
+    if (i !== this.hovered) {
+      if (this.hovered != null && this.config.onPointMouseOut) this.config.onPointMouseOut();
+      this.hovered = i;
+      if (i != null && this.config.onPointMouseOver) this.config.onPointMouseOver(i);
+      this.canvas.style.cursor = i == null ? 'default' : 'pointer';
+    }
+  }
+
+  onLeave() {
+    if (this.hovered != null && this.config.onPointMouseOut) this.config.onPointMouseOut();
+    this.hovered = null;
+    this.canvas.style.cursor = 'default';
+  }
+
+  onClick(ev) {
+    const i = this.pickPoint(ev);
+    if (this.config.onClick) this.config.onClick(i);
+  }
+
+  onWheel(ev) {
+    ev.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    const before = this.screenToSpace(mx, my);
+    const factor = ev.deltaY < 0 ? 1.15 : 0.87;
+    this.scale = Math.max(0.05, Math.min(12, this.scale * factor));
+    this.offsetX = mx - before[0] * this.scale;
+    this.offsetY = my - before[1] * this.scale;
+    this.render();
+  }
+
+  onDown(ev) {
+    this.dragging = true;
+    this.lastPointer = [ev.clientX, ev.clientY];
+  }
+
+  onDrag(ev) {
+    if (!this.dragging || !this.lastPointer) return;
+    this.offsetX += ev.clientX - this.lastPointer[0];
+    this.offsetY += ev.clientY - this.lastPointer[1];
+    this.lastPointer = [ev.clientX, ev.clientY];
+    this.render();
+  }
+
+  onUp() {
+    this.dragging = false;
+    this.lastPointer = null;
+  }
+
+  rgba(buf, i, opacity) {
+    const a = Math.max(0, Math.min(1, (buf[i * 4 + 3] ?? 1) * opacity));
+    return `rgba(${Math.round((buf[i * 4] ?? 1) * 255)},` +
+           `${Math.round((buf[i * 4 + 1] ?? 1) * 255)},` +
+           `${Math.round((buf[i * 4 + 2] ?? 1) * 255)},${a})`;
+  }
+
+  render() {
+    if (!this.ctx) return;
+    const rect = this.container.getBoundingClientRect();
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
+    ctx.fillStyle = '#00233C';
+    ctx.fillRect(0, 0, rect.width, rect.height);
+
+    ctx.save();
+    ctx.translate(this.offsetX, this.offsetY);
+    ctx.scale(this.scale, this.scale);
+    ctx.lineCap = 'round';
+
+    const largeGraphFade = L > 10000 ? 0.18 : (L > 3000 ? 0.32 : 1);
+    const linkOpacity = (this.config.linkOpacity ?? 1) * largeGraphFade;
+    for (let i = 0; i < L; i++) {
+      const s = this.links[i * 2], t = this.links[i * 2 + 1];
+      if (s == null || t == null) continue;
+      ctx.beginPath();
+      ctx.moveTo(this.positions[s * 2], this.positions[s * 2 + 1]);
+      ctx.lineTo(this.positions[t * 2], this.positions[t * 2 + 1]);
+      ctx.strokeStyle = this.rgba(this.linkColors, i, linkOpacity);
+      ctx.lineWidth = Math.max(0.4, (this.linkWidths[i] || 1) * (this.config.linkWidthScale || 1) / this.scale);
+      ctx.stroke();
+    }
+
+    const pointOpacity = this.config.pointOpacity ?? 1;
+    for (let i = 0; i < N; i++) {
+      const radius = Math.max(1.8 / this.scale, (this.sizes[i] || 4) * (this.config.pointSizeScale || 1));
+      ctx.beginPath();
+      ctx.arc(this.positions[i * 2], this.positions[i * 2 + 1], radius, 0, Math.PI * 2);
+      ctx.fillStyle = this.rgba(this.pointColors, i, pointOpacity);
+      ctx.fill();
+      if (i === this.focused) {
+        ctx.lineWidth = 2 / this.scale;
+        ctx.strokeStyle = '#FF5F02';
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
 // ---- initial cosmos.gl config ---- //
 const initialConfig = {
   backgroundColor: '#00233C',
@@ -963,11 +1276,12 @@ const initialConfig = {
     }
   },
   onClick: (index) => {
-    // Clicking a node clears any active edge focus, then sets node focus
+    // Clicking a node clears any active edge focus, then drills into that node.
     if (state.focusedEdge != null) {
       state.focusedEdge = null;
     }
     setFocused(index ?? null);
+    drillIntoNode(index);
   },
 
   onLinkMouseOver: (linkIndex) => {
@@ -1000,7 +1314,16 @@ const initialConfig = {
 };
 
 const div = document.getElementById('graph');
-const graph = new Graph(div, initialConfig);
+let graph;
+try {
+  graph = Graph ? new Graph(div, initialConfig) : new CanvasFallbackGraph(div, initialConfig);
+} catch (err) {
+  showRendererNotice(
+    'Canvas fallback active: the WebGL renderer could not start. ' +
+    'Click a node to drill into its subgraph.'
+  );
+  graph = new CanvasFallbackGraph(div, initialConfig);
+}
 
 graph.setPointPositions(pointPositions);
 graph.setPointSizes(pointSizes);
@@ -1011,6 +1334,7 @@ updateLegend();
 
 graph.setLinks(linksArr);
 graph.render();
+if (graph instanceof CanvasFallbackGraph) graph.fitView();
 
 // ============================================================ //
 //                       FOCUS / SELECTION                      //
@@ -1304,10 +1628,91 @@ const bfsDepthVal   = document.getElementById('v-bfs-depth');
 const bfsStatusMode = document.getElementById('bfs-mode');
 const bfsStatusStat = document.getElementById('bfs-stats');
 const bfsErr        = document.getElementById('bfs-error');
+const bfsBreadcrumb = document.getElementById('bfs-breadcrumb');
+
+function getBfsDepth() {
+  const depth = parseInt(bfsDepthInput.value, 10);
+  if (Number.isNaN(depth)) return 2;
+  return Math.max(1, Math.min(6, depth));
+}
+
+function setBfsSeedFromNode(index) {
+  const node = data.nodes[index];
+  if (!node) return;
+  const label = node.label ? ` ${node.label}` : '';
+  bfsSeedInput.value = `#${node.id}${label}`;
+}
 
 bfsDepthInput.addEventListener('input', () => {
-  bfsDepthVal.textContent = bfsDepthInput.value;
+  bfsDepthVal.textContent = getBfsDepth();
 });
+
+const BREADCRUMB_KEY = 'teraGraphExplorerBreadcrumbs';
+const NEXT_CRUMB_KEY = 'teraGraphExplorerNextCrumbLabel';
+
+function normaliseCrumbUrl(url) {
+  const u = new URL(url, window.location.href);
+  return u.pathname + u.search;
+}
+
+function loadBreadcrumbs() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(BREADCRUMB_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveBreadcrumbs(crumbs) {
+  sessionStorage.setItem(BREADCRUMB_KEY, JSON.stringify(crumbs.slice(-8)));
+}
+
+function currentCrumbLabel() {
+  const pending = sessionStorage.getItem(NEXT_CRUMB_KEY);
+  if (pending) {
+    sessionStorage.removeItem(NEXT_CRUMB_KEY);
+    return pending;
+  }
+  if (data._seed_id != null) return `#${data._seed_id} depth ${data._max_depth || getBfsDepth()}`;
+  if (data._empty === true) return 'Start';
+  return 'Full graph';
+}
+
+function rememberCurrentView() {
+  const url = normaliseCrumbUrl(window.location.href);
+  const label = currentCrumbLabel();
+  let crumbs = loadBreadcrumbs();
+  const existing = crumbs.findIndex(c => c.url === url);
+  if (existing >= 0) crumbs = crumbs.slice(0, existing + 1);
+  else crumbs.push({ label, url });
+  saveBreadcrumbs(crumbs);
+  renderBreadcrumbs(crumbs);
+}
+
+function renderBreadcrumbs(crumbs) {
+  bfsBreadcrumb.innerHTML = '';
+  crumbs.forEach((crumb, i) => {
+    if (i > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '›';
+      bfsBreadcrumb.appendChild(sep);
+    }
+    const isCurrent = i === crumbs.length - 1;
+    const item = document.createElement(isCurrent ? 'span' : 'a');
+    item.className = isCurrent ? 'current' : '';
+    item.textContent = crumb.label;
+    if (!isCurrent) {
+      item.onclick = () => { window.location.href = crumb.url; };
+    }
+    bfsBreadcrumb.appendChild(item);
+  });
+}
+
+function queueNextCrumb(label) {
+  sessionStorage.setItem(NEXT_CRUMB_KEY, label);
+}
 
 // Status badge: read totals from the data payload if the server stamped
 // them in (BFS mode), otherwise just show the loaded counts.
@@ -1369,6 +1774,7 @@ bfsDepthInput.addEventListener('input', () => {
     bfsDepthInput.disabled = true;
   }
 })();
+rememberCurrentView();
 
 async function bfsResolveSeed(payload) {
   bfsErr.textContent = '';
@@ -1398,9 +1804,15 @@ async function bfsResolveSeed(payload) {
   }
   if (!resp.ok) {
     // Server is reachable but returned an error — likely a SQL or auth issue.
-    const text = await resp.text().catch(() => resp.statusText);
-    bfsErr.textContent = `Server returned ${resp.status}: ${text.slice(0, 200)}`;
-    throw new Error(text);
+    let message = resp.statusText;
+    try {
+      const body = await resp.json();
+      message = body.error || message;
+    } catch (_) {
+      message = await resp.text().catch(() => message);
+    }
+    bfsErr.textContent = `Server returned ${resp.status}: ${message.slice(0, 220)}`;
+    throw new Error(message);
   }
   return resp.json();
 }
@@ -1417,7 +1829,27 @@ function navigateTo(seedId, maxDepth, opts) {
   } else if (opts && opts.full) {
     u.searchParams.set('full', '1');
   }
+  if (opts && opts.label) queueNextCrumb(opts.label);
   window.location.href = u.toString();
+}
+
+function drillIntoNode(index) {
+  if (index == null) return;
+  const node = data.nodes[index];
+  if (!node) return;
+
+  setBfsSeedFromNode(index);
+  const depth = getBfsDepth();
+
+  if (window.location.protocol === 'file:') {
+    bfsErr.textContent =
+      'BFS needs the server. Run: python teradata_cosmos_graph.py serve';
+    return;
+  }
+
+  const label = node.label || `#${node.id}`;
+  bfsErr.textContent = `Opening ${label} at depth ${depth}...`;
+  navigateTo(node.id, depth, { label: label + ' depth ' + depth });
 }
 
 document.getElementById('btn-bfs-run').onclick = async () => {
@@ -1426,9 +1858,10 @@ document.getElementById('btn-bfs-run').onclick = async () => {
     bfsErr.textContent = 'Enter a node label or #id';
     return;
   }
-  const depth = parseInt(bfsDepthInput.value, 10);
-  const payload = raw.startsWith('#')
-    ? { seed_id: parseInt(raw.slice(1), 10), max_depth: depth }
+  const depth = getBfsDepth();
+  const seedIdMatch = raw.match(/^#\s*(\d+)/);
+  const payload = seedIdMatch
+    ? { seed_id: parseInt(seedIdMatch[1], 10), max_depth: depth }
     : { seed_label: raw, max_depth: depth };
   try {
     const result = await bfsResolveSeed(payload);
@@ -1436,11 +1869,11 @@ document.getElementById('btn-bfs-run').onclick = async () => {
       bfsErr.textContent = 'No node matched that label.';
       return;
     }
-    navigateTo(result.seed_id, depth);
+    navigateTo(result.seed_id, depth, { label: raw.replace(/^#\s*/, '#') + ' depth ' + depth });
   } catch (_) { /* error already shown */ }
 };
 
-document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true });
+document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true, label: 'Full graph' });
 
 // Submit on Enter in the seed input
 bfsSeedInput.addEventListener('keydown', (ev) => {
@@ -1454,8 +1887,10 @@ bfsSeedInput.addEventListener('keydown', (ev) => {
 
 def render_html(data: dict, output_path: Path) -> None:
     payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    database = data.get("_database", DEFAULT_DATABASE)
     html = (HTML_TEMPLATE
             .replace("__DATA__", payload)
+            .replace("__DATABASE__", database)
             .replace("__LOGO_URI__", TERADATA_LOGO_URI))
     output_path.write_text(html, encoding="utf-8")
 
@@ -1463,8 +1898,10 @@ def render_html(data: dict, output_path: Path) -> None:
 def render_html_str(data: dict) -> str:
     """Same as render_html but returns the string (for the HTTP server)."""
     payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    database = data.get("_database", DEFAULT_DATABASE)
     return (HTML_TEMPLATE
             .replace("__DATA__", payload)
+            .replace("__DATABASE__", database)
             .replace("__LOGO_URI__", TERADATA_LOGO_URI))
 
 
@@ -1472,7 +1909,7 @@ def render_html_str(data: dict) -> str:
 # HTTP server mode — lets the running HTML re-query for new BFS subgraphs    #
 # --------------------------------------------------------------------------- #
 
-def serve(host: str, user: str, password: str, logmech: str,
+def serve(host: str, user: str, password: str, logmech: str, database: str,
           port: int, initial_seed_id, initial_max_depth: int) -> None:
     """Run a small HTTP server. GET / serves the visualisation HTML
     (with optional ?seed_id=&max_depth= query params for a BFS subgraph),
@@ -1481,7 +1918,7 @@ def serve(host: str, user: str, password: str, logmech: str,
     import socketserver
     import urllib.parse
 
-    print(f"→ Connecting to {host} as {user} ({logmech})…")
+    print(f"→ Connecting to {host} as {user} ({logmech}); database={database}…")
     conn = teradatasql.connect(host=host, user=user, password=password,
                                 logmech=logmech)
 
@@ -1500,16 +1937,16 @@ def serve(host: str, user: str, password: str, logmech: str,
             return cache[key]
         if seed_id is not None:
             print(f"  BFS from node_id={seed_id}, max_depth={max_depth}…")
-            data = fetch_bfs_subgraph(conn, seed_id, max_depth)
+            data = fetch_bfs_subgraph(conn, database, seed_id, max_depth)
             print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
         elif full:
             print(f"  fetching full graph…")
-            data = fetch_full_graph(conn)
+            data = fetch_full_graph(conn, database)
             print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
         else:
             # Empty landing page — no query, no data, just the controls panel.
             print("  empty landing page (awaiting user input)")
-            data = {"nodes": [], "links": [], "_empty": True}
+            data = {"nodes": [], "links": [], "_empty": True, "_database": database}
 
         html = render_html_str(data)
         if len(cache) >= CACHE_LIMIT:
@@ -1548,23 +1985,32 @@ def serve(host: str, user: str, password: str, logmech: str,
             else:
                 self.send_error(404)
 
+        def send_json_error(self, status: int, message: str):
+            body = json.dumps({"error": message}).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_POST(self):
             if self.path != "/api/bfs":
-                self.send_error(404)
+                self.send_json_error(404, "Endpoint not found")
                 return
             length = int(self.headers.get("Content-Length", "0"))
             try:
                 payload = json.loads(self.rfile.read(length))
             except Exception:
-                self.send_error(400, "Bad JSON")
+                self.send_json_error(400, "Bad JSON")
                 return
             try:
                 if "seed_id" in payload:
                     seed_id = int(payload["seed_id"])
                 elif "seed_label" in payload:
-                    seed_id = resolve_seed_label(conn, payload["seed_label"])
+                    seed_id = resolve_seed_label(conn, database, payload["seed_label"])
                 else:
-                    self.send_error(400, "Need seed_id or seed_label")
+                    self.send_json_error(400, "Need seed_id or seed_label")
                     return
                 resp = json.dumps({"seed_id": seed_id}).encode("utf-8")
                 self.send_response(200)
@@ -1573,7 +2019,11 @@ def serve(host: str, user: str, password: str, logmech: str,
                 self.end_headers()
                 self.wfile.write(resp)
             except Exception as e:
-                self.send_error(500, f"BFS failed: {e}")
+                print(f"  [api] BFS failed: {e}")
+                self.send_json_error(
+                    500,
+                    "BFS lookup failed. Check the seed label and database query syntax.",
+                )
 
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", port), Handler) as httpd:
@@ -1591,7 +2041,7 @@ def serve(host: str, user: str, password: str, logmech: str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Visualise graph_demo_db with cosmos.gl (Teradata-themed)"
+        description="Visualise Teradata graph tables with cosmos.gl (Teradata-themed)"
     )
     parser.add_argument("mode", nargs="?", default="static",
                         choices=["static", "serve"],
@@ -1601,6 +2051,9 @@ def main() -> None:
     parser.add_argument("--user", default=os.getenv("TD_USER", "demo_user"))
     parser.add_argument("--password", default=os.getenv("TD_PASSWORD", "Test@123"))
     parser.add_argument("--logmech",  default=os.getenv("TD_LOGMECH", "TD2"))
+    parser.add_argument("--database", default=os.getenv("TD_DATABASE", DEFAULT_DATABASE),
+                        help="Database containing graph_nodes and graph_edges "
+                             "(default: TD_DATABASE or Playpen)")
     parser.add_argument("--output",   default="graph_demo.html",
                         help="Output filename (static mode only)")
     parser.add_argument("--no-open",  action="store_true")
@@ -1617,10 +2070,15 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    missing = [k for k in ("host", "user", "password") if not getattr(args, k)]
+    missing = [k for k in ("host", "user", "password", "database") if not getattr(args, k)]
     if missing:
         sys.exit("Missing connection details: " + ", ".join(missing) +
-                 "\nProvide via flags or env vars: TD_HOST, TD_USER, TD_PASSWORD")
+                 "\nProvide via flags or env vars: TD_HOST, TD_USER, TD_PASSWORD, TD_DATABASE")
+
+    try:
+        qualify_table(args.database, "graph_nodes")
+    except ValueError as exc:
+        sys.exit(f"Invalid --database value: {exc}")
 
     if args.max_depth < 1 or args.max_depth > 6:
         sys.exit("--max-depth must be between 1 and 6")
@@ -1632,27 +2090,27 @@ def main() -> None:
         with teradatasql.connect(host=args.host, user=args.user,
                                   password=args.password,
                                   logmech=args.logmech) as conn:
-            seed_id = resolve_seed_label(conn, args.seed_label)
+            seed_id = resolve_seed_label(conn, args.database, args.seed_label)
         if seed_id is None:
             sys.exit(f"No node found with label '{args.seed_label}'")
         print(f"  resolved to node_id={seed_id}")
 
     if args.mode == "serve":
-        serve(args.host, args.user, args.password, args.logmech,
+        serve(args.host, args.user, args.password, args.logmech, args.database,
               args.port, seed_id, args.max_depth)
         return
 
     # static mode
-    print(f"→ Connecting to {args.host} as {args.user} ({args.logmech})…")
+    print(f"→ Connecting to {args.host} as {args.user} ({args.logmech}); database={args.database}…")
     with teradatasql.connect(host=args.host, user=args.user,
                               password=args.password,
                               logmech=args.logmech) as conn:
         if seed_id is not None:
             print(f"  BFS from node_id={seed_id}, max_depth={args.max_depth}…")
-            data = fetch_bfs_subgraph(conn, seed_id, args.max_depth)
+            data = fetch_bfs_subgraph(conn, args.database, seed_id, args.max_depth)
         else:
             print("  fetching full graph…")
-            data = fetch_full_graph(conn)
+            data = fetch_full_graph(conn, args.database)
 
     print(f"  fetched {len(data['nodes'])} nodes, {len(data['links'])} edges")
     out = Path(args.output).resolve()
