@@ -662,8 +662,12 @@ function showFatalError(message) {
   e.textContent = message;
 }
 
+const RENDERER_NOTICE_KEY = 'tera-graph-renderer-notice-seen-v1';
 let noticeTimer = null;
 function showRendererNotice(message) {
+  if (sessionStorage.getItem(RENDERER_NOTICE_KEY) === '1') return;
+  sessionStorage.setItem(RENDERER_NOTICE_KEY, '1');
+
   const notice = document.getElementById('notice');
   const noticeText = document.getElementById('notice-text');
   const close = document.getElementById('notice-close');
@@ -1011,6 +1015,7 @@ function applyRenderParams() {
   graph.setConfig({
     curvedLinks: state.edges.curved,
     linkArrows:  state.edges.arrows,
+    renderLinkArrows: state.edges.arrows,
   });
 }
 function applyPointSizeScale() {
@@ -1296,12 +1301,43 @@ class CanvasFallbackGraph {
     for (let i = 0; i < L; i++) {
       const s = this.links[i * 2], t = this.links[i * 2 + 1];
       if (s == null || t == null) continue;
+      const sx = this.positions[s * 2];
+      const sy = this.positions[s * 2 + 1];
+      const tx = this.positions[t * 2];
+      const ty = this.positions[t * 2 + 1];
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const stroke = this.rgba(this.linkColors, i, linkOpacity);
+      const width = Math.max(0.4, (this.linkWidths[i] || 1) * (this.config.linkWidthScale || 1) / this.scale);
       ctx.beginPath();
-      ctx.moveTo(this.positions[s * 2], this.positions[s * 2 + 1]);
-      ctx.lineTo(this.positions[t * 2], this.positions[t * 2 + 1]);
-      ctx.strokeStyle = this.rgba(this.linkColors, i, linkOpacity);
-      ctx.lineWidth = Math.max(0.4, (this.linkWidths[i] || 1) * (this.config.linkWidthScale || 1) / this.scale);
+      ctx.moveTo(sx, sy);
+      if (this.config.curvedLinks) {
+        const bend = 0.16;
+        const cx = (sx + tx) / 2 - dy * bend;
+        const cy = (sy + ty) / 2 + dx * bend;
+        ctx.quadraticCurveTo(cx, cy, tx, ty);
+      } else {
+        ctx.lineTo(tx, ty);
+      }
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = width;
       ctx.stroke();
+
+      if (this.config.linkArrows || this.config.renderLinkArrows) {
+        const angle = Math.atan2(ty - sy, tx - sx);
+        const nodeRadius = Math.max(2 / this.scale, (this.sizes[t] || 4) * (this.config.pointSizeScale || 1));
+        const arrowLen = Math.max(4 / this.scale, 8 / this.scale);
+        const ax = tx - Math.cos(angle) * nodeRadius;
+        const ay = ty - Math.sin(angle) * nodeRadius;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(angle - 0.42) * arrowLen, ay - Math.sin(angle - 0.42) * arrowLen);
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax - Math.cos(angle + 0.42) * arrowLen, ay - Math.sin(angle + 0.42) * arrowLen);
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = width;
+        ctx.stroke();
+      }
     }
 
     const pointOpacity = this.config.pointOpacity ?? 1;
@@ -1332,6 +1368,7 @@ const initialConfig = {
   renderLinks: true,
   curvedLinks: state.edges.curved,
   linkArrows: state.edges.arrows,
+  renderLinkArrows: state.edges.arrows,
 
   fitViewOnInit: true,
   fitViewDelay: 500,
@@ -1443,6 +1480,11 @@ updateLegend();
 
 graph.setLinks(linksArr);
 graph.render();
+applyRenderParams();
+applyPointSizeScale();
+applyPointOpacity();
+applyLinkWidthScale();
+applyLinkOpacity();
 if (graph instanceof CanvasFallbackGraph) graph.fitView();
 
 // ============================================================ //
@@ -2011,6 +2053,7 @@ async function bfsResolveSeed(payload) {
 }
 
 function navigateTo(seedId, maxDepth, opts) {
+  saveUiSettings();
   // opts: { full: bool } — explicit "full graph" navigation
   const u = new URL(window.location.href);
   u.searchParams.delete('seed_id');
