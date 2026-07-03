@@ -49,6 +49,11 @@ except ImportError:
 
 DEFAULT_DATABASE = "Playpen"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]*$")
+FILTER_COLUMNS = {
+    "community": "community",
+    "category": "category",
+    "role": "node_role",
+}
 
 
 def qualify_table(database: str, table: str) -> str:
@@ -59,6 +64,16 @@ def qualify_table(database: str, table: str) -> str:
             "using letters, numbers, _, $, or #"
         )
     return f"{database}.{table}"
+
+
+def filter_column(filter_key: str | None) -> str | None:
+    """Return a validated graph_nodes column for an optional BFS filter."""
+    if not filter_key:
+        return None
+    try:
+        return FILTER_COLUMNS[filter_key]
+    except KeyError as exc:
+        raise ValueError("filter_key must be one of: community, category, role") from exc
 
 
 def fetch_full_graph(conn, database: str) -> dict:
@@ -81,7 +96,9 @@ def fetch_full_graph(conn, database: str) -> dict:
     return out
 
 
-def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int) -> dict:
+def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
+                       filter_key: str | None = None,
+                       filter_value: str | None = None) -> dict:
     """Recursive-CTE BFS from seed_id, capped at max_depth hops.
 
     Strategy:
@@ -104,6 +121,7 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int) -> dic
 
     node_table = qualify_table(database, "graph_nodes")
     edge_table = qualify_table(database, "graph_edges")
+    filter_col = filter_column(filter_key)
 
     bfs_sql = (
         "WITH RECURSIVE bfs (node_id, depth) AS (\n"
@@ -135,23 +153,35 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int) -> dic
                 "_seed_id": seed_id, "_max_depth": max_depth,
                 "_total_nodes": 0, "_total_edges": 0,
                 "_database": database,
+                "_filter_key": filter_key, "_filter_value": filter_value,
             }
 
         ids_csv = ",".join(str(i) for i in visited_ids)
 
-        cur.execute(
+        node_sql = (
             "SELECT node_id, node_label, category, community, "
             "       importance, node_role "
             f"FROM {node_table} WHERE node_id IN ({ids_csv})"
         )
+        node_params = ()
+        if filter_col and filter_value is not None:
+            node_sql += f" AND {filter_col} = ?"
+            node_params = (filter_value,)
+        cur.execute(node_sql, node_params)
         nodes = _read_nodes(cur)
 
-        cur.execute(
-            "SELECT source_id, target_id, edge_weight, edge_type, strength "
-            f"FROM {edge_table} "
-            f"WHERE source_id IN ({ids_csv}) AND target_id IN ({ids_csv})"
-        )
-        links = _read_edges(cur)
+        filtered_ids = [n["id"] for n in nodes]
+        if not filtered_ids:
+            links = []
+        else:
+            filtered_ids_csv = ",".join(str(i) for i in filtered_ids)
+            cur.execute(
+                "SELECT source_id, target_id, edge_weight, edge_type, strength "
+                f"FROM {edge_table} "
+                f"WHERE source_id IN ({filtered_ids_csv}) "
+                f"AND target_id IN ({filtered_ids_csv})"
+            )
+            links = _read_edges(cur)
 
         cur.execute(f"SELECT COUNT(*) FROM {node_table}")
         total_nodes = int(cur.fetchone()[0])
@@ -164,6 +194,8 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int) -> dic
     out["_total_nodes"] = total_nodes
     out["_total_edges"] = total_edges
     out["_database"] = database
+    out["_filter_key"] = filter_key
+    out["_filter_value"] = filter_value
     return out
 
 
@@ -392,6 +424,29 @@ HTML_TEMPLATE = r"""<!doctype html>
   #tooltip .row { display: flex; justify-content: space-between;
                   gap: 12px; color: var(--text-dim); margin: 1px 0; }
   #tooltip .row span:last-child { color: var(--text); font-weight: 500; }
+  #context-menu { position: fixed; display: none; min-width: 230px;
+                  background: var(--td-navy); border: 1px solid var(--td-orange);
+                  border-radius: 6px; padding: 6px; z-index: 80;
+                  box-shadow: 0 8px 28px rgba(0,0,0,0.48); }
+  #context-menu .title { padding: 6px 8px 8px 8px; color: var(--text-dim);
+                         font-size: 11px; border-bottom: 1px solid var(--border);
+                         margin-bottom: 4px; }
+  #context-menu .field { padding: 6px 8px 4px 8px; }
+  #context-menu label { display: block; color: var(--text-dim); font-size: 10px;
+                        text-transform: uppercase; letter-spacing: 0.04em;
+                        margin-bottom: 4px; }
+  #context-menu select { width: 100%; background: var(--td-blue-deep);
+                         border: 1px solid var(--border-light);
+                         border-radius: 4px; color: var(--text);
+                         padding: 6px 7px; font: inherit; font-size: 12px; }
+  #context-menu select option { background: #ffffff; color: #1f2933; }
+  #context-menu select option:checked { background: #d9e8f5; color: #00233c; }
+  #context-menu button { display: block; width: calc(100% - 16px);
+                         margin: 8px; text-align: center;
+                         background: var(--td-orange); border: 0; color: #fff;
+                         padding: 7px 8px; border-radius: 4px; cursor: pointer;
+                         font: inherit; font-size: 12px; font-weight: 700; }
+  #context-menu button:hover { background: #e65300; }
 
   #error { position: absolute; top: 50%; left: 50%;
            transform: translate(-50%, -50%);
@@ -468,7 +523,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   <div class="text">
     <h1>__DATABASE__</h1>
     <div class="stats" id="stats">loading…</div>
-    <div class="hint">Drag · Scroll to zoom · Hover nodes/edges for details · Click a node to drill</div>
+    <div class="hint">Drag · Scroll to zoom · Hover nodes/edges for details · Right-click a node to drill-down</div>
   </div>
 </div>
 
@@ -596,6 +651,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 </aside>
 
 <div id="tooltip"></div>
+<div id="context-menu"></div>
 <div id="notice"><span id="notice-text"></span><button id="notice-close" title="Dismiss">×</button></div>
 <div id="error"></div>
 
@@ -641,13 +697,13 @@ if (HAS_WEBGL) {
   } catch (err) {
     showRendererNotice(
       'Canvas fallback active: cosmos.gl could not be loaded. ' +
-      'Click a node to drill into its subgraph.'
+      'Right-click a node to drill-down into its subgraph.'
     );
   }
 } else {
   showRendererNotice(
     'Canvas fallback active: WebGL2 is unavailable in this browser session. ' +
-    'Click a node to drill into its subgraph.'
+    'Right-click a node to drill-down into its subgraph.'
   );
 }
 
@@ -659,6 +715,7 @@ const idIndex = new Map(data.nodes.map((n, i) => [n.id, i]));
 // ---- neighborhood index (for selection highlighting) ---- //
 const neighborOf  = new Map();   // pointIndex -> Set<neighborPointIndex>
 const incidentOf  = new Map();   // pointIndex -> Set<edgeIndex>
+const nodeDegrees = new Float32Array(N);
 data.nodes.forEach((_, i) => { neighborOf.set(i, new Set()); incidentOf.set(i, new Set()); });
 data.links.forEach((e, i) => {
   const s = idIndex.get(e.source), t = idIndex.get(e.target);
@@ -666,7 +723,11 @@ data.links.forEach((e, i) => {
   neighborOf.get(t).add(s);
   incidentOf.get(s).add(i);
   incidentOf.get(t).add(i);
+  nodeDegrees[s] += 1;
+  nodeDegrees[t] += 1;
 });
+let maxNodeDegree = 1;
+for (let i = 0; i < N; i++) maxNodeDegree = Math.max(maxNodeDegree, nodeDegrees[i]);
 
 // ---- palette ---- //
 const PALETTE = [
@@ -697,6 +758,7 @@ const hexToRgb = (h) => [
 const ORANGE_RGB = hexToRgb('#FF5F02');
 
 // ---- application state ---- //
+const UI_SETTINGS_KEY = 'tera-graph-ui-settings-v1';
 const state = {
   sim:     { gravity: 0.25, repulsion: 1.0, linkSpring: 1.0,
              linkDistance: 10, friction: 0.85, decay: 2000 },
@@ -709,6 +771,26 @@ const state = {
   hoveredEdge: null,                            // hovered edge index (transient)
   labels:  { nodes: false, edges: false },
 };
+
+function loadUiSettings() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(UI_SETTINGS_KEY) || '{}');
+    if (saved.sim)    Object.assign(state.sim, saved.sim);
+    if (saved.nodes)  Object.assign(state.nodes, saved.nodes);
+    if (saved.edges)  Object.assign(state.edges, saved.edges);
+    if (saved.labels) Object.assign(state.labels, saved.labels);
+  } catch (_) { /* keep defaults */ }
+}
+
+function saveUiSettings() {
+  sessionStorage.setItem(UI_SETTINGS_KEY, JSON.stringify({
+    sim: state.sim,
+    nodes: state.nodes,
+    edges: state.edges,
+    labels: state.labels,
+  }));
+}
+loadUiSettings();
 
 // ---- typed-array buffers ---- //
 const pointPositions = new Float32Array(N * 2);
@@ -748,11 +830,13 @@ function seedPositions() {
 }
 seedPositions();
 
-// Point sizes are baked once. Default formula (2..10 px) is now noticeably
-// smaller; the size-scale slider drives the cosmos.gl pointSizeScale config
-// uniform instead of rebuilding this buffer each tick.
+// Point sizes are baked once. Blend importance with local degree so hubs
+// become visible anchors without adding expensive outlines or DOM labels.
+// The size-scale slider still drives the final shader multiplier.
 for (let i = 0; i < N; i++) {
-  pointSizes[i] = 2 + (data.nodes[i].importance || 0.5) * 8;     // 2..10
+  const importance = Math.max(0, Math.min(1, data.nodes[i].importance ?? 0.5));
+  const degreeScore = Math.sqrt(nodeDegrees[i] / maxNodeDegree);
+  pointSizes[i] = 2.2 + importance * 5.8 + degreeScore * 4.2;     // 2.2..12.2
 }
 
 data.links.forEach((e, i) => {
@@ -811,8 +895,9 @@ function rebuildPointColors() {
 
   data.nodes.forEach((n, i) => {
     const [r, g, b] = hexToRgb(cmap[n[state.nodes.colorBy]] || '#888888');
+    const importance = Math.max(0, Math.min(1, n.importance ?? 0.5));
     let outR = r, outG = g, outB = b;
-    let alpha = 1.0;
+    let alpha = 0.72 + importance * 0.28;
 
     // Determine if this node should be dimmed.
     let dim = false;
@@ -831,6 +916,13 @@ function rebuildPointColors() {
       // Grey out: muted neutral colour, low alpha
       outR = outG = outB = 0.40;
       alpha = 0.18;
+    } else {
+      // Subtle luminance lift keeps category colours recognisable while
+      // giving important nodes a cleaner, less flat point-cloud look.
+      const lift = 0.05 + importance * 0.10;
+      outR += (1 - outR) * lift;
+      outG += (1 - outG) * lift;
+      outB += (1 - outB) * lift;
     }
 
     pointColors[i * 4]     = outR;
@@ -1035,6 +1127,7 @@ class CanvasFallbackGraph {
     this.canvas.addEventListener('mousemove', (ev) => this.onMove(ev));
     this.canvas.addEventListener('mouseleave', () => this.onLeave());
     this.canvas.addEventListener('click', (ev) => this.onClick(ev));
+    this.canvas.addEventListener('contextmenu', (ev) => this.onContextMenu(ev));
     this.canvas.addEventListener('wheel', (ev) => this.onWheel(ev), { passive: false });
     this.canvas.addEventListener('mousedown', (ev) => this.onDown(ev));
     addEventListener('mouseup', () => this.onUp());
@@ -1135,6 +1228,14 @@ class CanvasFallbackGraph {
   onClick(ev) {
     const i = this.pickPoint(ev);
     if (this.config.onClick) this.config.onClick(i);
+  }
+
+  onContextMenu(ev) {
+    ev.preventDefault();
+    const i = this.pickPoint(ev);
+    if (i != null && this.config.onPointContextMenu) {
+      this.config.onPointContextMenu(i, ev);
+    }
   }
 
   onWheel(ev) {
@@ -1276,12 +1377,14 @@ const initialConfig = {
     }
   },
   onClick: (index) => {
-    // Clicking a node clears any active edge focus, then drills into that node.
+    hideNodeContextMenu();
     if (state.focusedEdge != null) {
       state.focusedEdge = null;
     }
     setFocused(index ?? null);
-    drillIntoNode(index);
+  },
+  onPointContextMenu: (index, ev) => {
+    showNodeContextMenu(index, ev.clientX, ev.clientY);
   },
 
   onLinkMouseOver: (linkIndex) => {
@@ -1320,10 +1423,16 @@ try {
 } catch (err) {
   showRendererNotice(
     'Canvas fallback active: the WebGL renderer could not start. ' +
-    'Click a node to drill into its subgraph.'
+    'Right-click a node to drill-down into its subgraph.'
   );
   graph = new CanvasFallbackGraph(div, initialConfig);
 }
+
+div.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  const index = state.hovered;
+  if (index != null) showNodeContextMenu(index, ev.clientX, ev.clientY);
+});
 
 graph.setPointPositions(pointPositions);
 graph.setPointSizes(pointSizes);
@@ -1373,6 +1482,76 @@ function focusOnNode(i) {
 //                            UI                                //
 // ============================================================ //
 
+const nodeContextMenu = document.getElementById('context-menu');
+
+function hideNodeContextMenu() {
+  nodeContextMenu.style.display = 'none';
+}
+
+function contextMenuButton(label, action) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = label;
+  btn.onclick = () => {
+    hideNodeContextMenu();
+    action();
+  };
+  return btn;
+}
+
+function showNodeContextMenu(index, x, y) {
+  const node = data.nodes[index];
+  if (!node) return;
+
+  setFocused(index);
+  nodeContextMenu.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = node.label || `#${node.id}`;
+  nodeContextMenu.appendChild(title);
+
+  const filterField = document.createElement('div');
+  filterField.className = 'field';
+
+  const filterLabel = document.createElement('label');
+  filterLabel.htmlFor = 'context-filter';
+  filterLabel.textContent = 'Filter';
+  filterField.appendChild(filterLabel);
+
+  const filterSelect = document.createElement('select');
+  filterSelect.id = 'context-filter';
+  [
+    ['', 'No value', null],
+    ['community', 'Community', node.community],
+    ['category', 'Category', node.category],
+    ['role', 'Role', node.role],
+  ].forEach(([key, label, value]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = value == null || value === '' ? label : `${label}: ${value}`;
+    opt.disabled = key !== '' && (value == null || value === '');
+    filterSelect.appendChild(opt);
+  });
+  filterField.appendChild(filterSelect);
+  nodeContextMenu.appendChild(filterField);
+
+  nodeContextMenu.appendChild(contextMenuButton('Drill into node', () => {
+    const key = filterSelect.value;
+    const values = { community: node.community, category: node.category, role: node.role };
+    drillIntoNode(index, key || undefined, key ? values[key] : undefined);
+  }));
+
+  nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
+  nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
+  nodeContextMenu.style.display = 'block';
+}
+
+addEventListener('click', (ev) => {
+  if (!nodeContextMenu.contains(ev.target)) hideNodeContextMenu();
+});
+addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') hideNodeContextMenu();
+});
 let paused = false;
 const btnPause = document.getElementById('btn-pause');
 
@@ -1406,8 +1585,15 @@ function bindSlider(sliderId, valueId, getter, setter, onChange) {
     setter(v);
     value.textContent = fmt(v);
     onChange();
+    saveUiSettings();
   });
 }
+
+document.getElementById('sel-colorBy').value = state.nodes.colorBy;
+document.getElementById('chk-curved').checked = state.edges.curved;
+document.getElementById('chk-arrows').checked = state.edges.arrows;
+document.getElementById('chk-nodeLabels').checked = state.labels.nodes;
+document.getElementById('chk-edgeLabels').checked = state.labels.edges;
 
 // simulation sliders — re-energize after setConfig
 bindSlider('s-gravity',      'v-gravity',
@@ -1437,15 +1623,18 @@ document.getElementById('sel-colorBy').addEventListener('change', (ev) => {
   state.nodes.colorBy = ev.target.value;
   rebuildPointColors();
   updateLegend();
+  saveUiSettings();
 });
 
 document.getElementById('chk-curved').addEventListener('change', (ev) => {
   state.edges.curved = ev.target.checked;
   applyRenderParams();
+  saveUiSettings();
 });
 document.getElementById('chk-arrows').addEventListener('change', (ev) => {
   state.edges.arrows = ev.target.checked;
   applyRenderParams();
+  saveUiSettings();
 });
 
 // ============================================================ //
@@ -1605,10 +1794,14 @@ function setEdgeLabelsVisible(show) {
 
 document.getElementById('chk-nodeLabels').addEventListener('change', (ev) => {
   setNodeLabelsVisible(ev.target.checked);
+  saveUiSettings();
 });
 document.getElementById('chk-edgeLabels').addEventListener('change', (ev) => {
   setEdgeLabelsVisible(ev.target.checked);
+  saveUiSettings();
 });
+setNodeLabelsVisible(state.labels.nodes);
+setEdgeLabelsVisible(state.labels.edges);
 
 // ============================================================ //
 //                       BFS RUNTIME RELOAD                     //
@@ -1823,17 +2016,23 @@ function navigateTo(seedId, maxDepth, opts) {
   u.searchParams.delete('seed_id');
   u.searchParams.delete('max_depth');
   u.searchParams.delete('full');
+  u.searchParams.delete('filter_key');
+  u.searchParams.delete('filter_value');
   if (seedId != null) {
     u.searchParams.set('seed_id', seedId);
     u.searchParams.set('max_depth', maxDepth);
   } else if (opts && opts.full) {
     u.searchParams.set('full', '1');
   }
+  if (opts && opts.filterKey && opts.filterValue != null) {
+    u.searchParams.set('filter_key', opts.filterKey);
+    u.searchParams.set('filter_value', opts.filterValue);
+  }
   if (opts && opts.label) queueNextCrumb(opts.label);
   window.location.href = u.toString();
 }
 
-function drillIntoNode(index) {
+function drillIntoNode(index, filterKey, filterValue) {
   if (index == null) return;
   const node = data.nodes[index];
   if (!node) return;
@@ -1848,8 +2047,13 @@ function drillIntoNode(index) {
   }
 
   const label = node.label || `#${node.id}`;
-  bfsErr.textContent = `Opening ${label} at depth ${depth}...`;
-  navigateTo(node.id, depth, { label: label + ' depth ' + depth });
+  const filterLabel = filterKey ? ` (${filterKey}: ${filterValue})` : '';
+  bfsErr.textContent = `Opening ${label}${filterLabel} at depth ${depth}...`;
+  navigateTo(node.id, depth, {
+    label: label + filterLabel + ' depth ' + depth,
+    filterKey,
+    filterValue,
+  });
 }
 
 document.getElementById('btn-bfs-run').onclick = async () => {
@@ -1927,17 +2131,19 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     cache: dict = {}
     CACHE_LIMIT = 4
 
-    def html_for(seed_id, max_depth: int, full: bool = False) -> str:
+    def html_for(seed_id, max_depth: int, full: bool = False,
+                 filter_key=None, filter_value=None) -> str:
         # Three states:
         #   1) empty: no seed and not full -> empty visualisation, prompt user
         #   2) bfs:   seed_id given        -> recursive CTE subgraph
         #   3) full:  full=True            -> entire graph
-        key = (seed_id, max_depth, full)
+        key = (seed_id, max_depth, full, filter_key, filter_value)
         if key in cache:
             return cache[key]
         if seed_id is not None:
-            print(f"  BFS from node_id={seed_id}, max_depth={max_depth}…")
-            data = fetch_bfs_subgraph(conn, database, seed_id, max_depth)
+            print(f"  BFS from node_id={seed_id}, max_depth={max_depth}, filter={filter_key}:{filter_value}…")
+            data = fetch_bfs_subgraph(conn, database, seed_id, max_depth,
+                                      filter_key, filter_value)
             print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
         elif full:
             print(f"  fetching full graph…")
@@ -1971,8 +2177,12 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 max_depth = (int(qs["max_depth"][0]) if "max_depth" in qs
                              else (initial_max_depth or 2))
                 full = qs.get("full", ["0"])[0] in ("1", "true")
+                filter_key = qs.get("filter_key", [None])[0]
+                filter_value = qs.get("filter_value", [None])[0]
                 try:
-                    body = html_for(seed_id, max_depth, full=full).encode("utf-8")
+                    body = html_for(seed_id, max_depth, full=full,
+                                    filter_key=filter_key,
+                                    filter_value=filter_value).encode("utf-8")
                 except Exception as e:
                     self.send_error(500, f"Query failed: {e}")
                     return
