@@ -1,3 +1,19 @@
+document.body.classList.add('graph-pending');
+
+function showGraphLoading(message = 'Centering graph...') {
+  const overlay = document.getElementById('graph-loading');
+  const text = document.getElementById('graph-loading-text');
+  if (text) text.textContent = message;
+  document.body.classList.add('graph-pending');
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function hideGraphLoading() {
+  const overlay = document.getElementById('graph-loading');
+  document.body.classList.remove('graph-pending');
+  if (overlay) overlay.classList.add('hidden');
+}
+showGraphLoading();
 function showFatalError(message) {
   const e = document.getElementById('error');
   e.style.display = 'block';
@@ -102,6 +118,10 @@ const hexToRgb = (h) => [
   parseInt(h.slice(5, 7), 16) / 255,
 ];
 const ORANGE_RGB = hexToRgb('#FF5F02');
+
+function browserEventFromArgs(positionOrEvent, maybeEvent) {
+  return maybeEvent || positionOrEvent || null;
+}
 
 // ---- application state ---- //
 const UI_SETTINGS_KEY = 'tera-graph-ui-settings-v1';
@@ -456,6 +476,7 @@ function applyRenderParams() {
     linkArrows:  state.edges.arrows,
     renderLinkArrows: state.edges.arrows,
   });
+  syncArrowOverlay();
 }
 function applyPointSizeScale() {
   // pointSizeScale is a shader uniform — changes are picked up on the next
@@ -841,6 +862,7 @@ const initialConfig = {
   enableDrag: true,
 
   simulationGravity:      state.sim.gravity,
+  simulationCenter:       0.35,
   simulationRepulsion:    state.sim.repulsion,
   simulationLinkSpring:   state.sim.linkSpring,
   simulationLinkDistance: state.sim.linkDistance,
@@ -885,12 +907,16 @@ const initialConfig = {
     }
     setFocused(index ?? null);
   },
-  onPointDoubleClick: (index) => {
+  onPointDoubleClick: (index, positionOrEvent, maybeEvent) => {
+    const ev = browserEventFromArgs(positionOrEvent, maybeEvent);
+    if (ev) ev.preventDefault();
     hideNodeContextMenu();
     drillIntoNode(index);
   },
-  onPointContextMenu: (index, ev) => {
-    showNodeContextMenu(index, ev.clientX, ev.clientY);
+  onPointContextMenu: (index, positionOrEvent, maybeEvent) => {
+    const ev = browserEventFromArgs(positionOrEvent, maybeEvent);
+    if (ev) ev.preventDefault();
+    showNodeContextMenu(index, ev?.clientX ?? innerWidth / 2, ev?.clientY ?? innerHeight / 2);
   },
 
   onLinkMouseOver: (linkIndex) => {
@@ -916,7 +942,7 @@ const initialConfig = {
     // Clicking an edge clears any node focus and selects this edge
     if (state.focused != null) {
       state.focused = null;
-      graph.setFocusedPointByIndex(undefined);
+      safeSetFocusedPoint(null);
     }
     setFocusedEdge(linkIndex ?? null);
   },
@@ -934,17 +960,191 @@ try {
   graph = new CanvasFallbackGraph(div, initialConfig);
 }
 
-div.addEventListener('dblclick', (ev) => {
-  const index = state.hovered;
-  if (index == null) return;
+const isCanvasRenderer = graph instanceof CanvasFallbackGraph;
+const arrowCanvas = document.createElement('canvas');
+const arrowCtx = arrowCanvas.getContext('2d');
+arrowCanvas.style.position = 'absolute';
+arrowCanvas.style.inset = '0';
+arrowCanvas.style.pointerEvents = 'none';
+arrowCanvas.style.zIndex = '4';
+arrowCanvas.style.display = 'none';
+div.appendChild(arrowCanvas);
+let arrowRafId = null;
+
+function resizeArrowCanvas() {
+  const rect = div.getBoundingClientRect();
+  const ratio = Math.min(devicePixelRatio || 1, 2);
+  arrowCanvas.width = Math.max(1, Math.floor(rect.width * ratio));
+  arrowCanvas.height = Math.max(1, Math.floor(rect.height * ratio));
+  arrowCanvas.style.width = rect.width + 'px';
+  arrowCanvas.style.height = rect.height + 'px';
+  arrowCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+}
+
+function projectToGraphPoint(spacePoint) {
+  if (typeof graph.spaceToScreenPosition !== 'function') return null;
+  const rect = div.getBoundingClientRect();
+  try {
+    const sp = graph.spaceToScreenPosition(spacePoint);
+    if (!sp) return null;
+    if (sp[0] >= -50 && sp[0] <= rect.width + 50 && sp[1] >= -50 && sp[1] <= rect.height + 50) return sp;
+    return [sp[0] - rect.left, sp[1] - rect.top];
+  } catch (_) {
+    return null;
+  }
+}
+
+function linkRgba(i) {
+  const alpha = Math.max(0, Math.min(1, (linkColors[i * 4 + 3] ?? 1) * (state.edges.opacity ?? 1)));
+  return `rgba(${Math.round((linkColors[i * 4] ?? 1) * 255)},` +
+         `${Math.round((linkColors[i * 4 + 1] ?? 1) * 255)},` +
+         `${Math.round((linkColors[i * 4 + 2] ?? 1) * 255)},${Math.max(0.28, alpha)})`;
+}
+
+function drawArrowOverlay() {
+  if (isCanvasRenderer || !state.edges.arrows) return;
+  resizeArrowCanvas();
+  const rect = div.getBoundingClientRect();
+  arrowCtx.clearRect(0, 0, rect.width, rect.height);
+  let positions;
+  try {
+    positions = typeof graph.getPointPositions === 'function' ? graph.getPointPositions() : pointPositions;
+  } catch (_) {
+    positions = pointPositions;
+  }
+  if (!positions || positions.length < N * 2) return;
+
+  const maxArrows = Math.min(L, 60000);
+  for (let i = 0; i < maxArrows; i++) {
+    const s = linksArr[i * 2], t = linksArr[i * 2 + 1];
+    if (s == null || t == null) continue;
+    const source = projectToGraphPoint([positions[s * 2], positions[s * 2 + 1]]);
+    const target = projectToGraphPoint([positions[t * 2], positions[t * 2 + 1]]);
+    if (!source || !target) continue;
+    const dx = target[0] - source[0];
+    const dy = target[1] - source[1];
+    const len = Math.hypot(dx, dy);
+    if (len < 8) continue;
+    const ux = dx / len;
+    const uy = dy / len;
+    const targetRadius = Math.max(4, (pointSizes[t] || 4) * (state.nodes.sizeScale || 1) * 1.25);
+    const tipX = target[0] - ux * targetRadius;
+    const tipY = target[1] - uy * targetRadius;
+    const arrowLen = Math.max(8, Math.min(14, 7 + (linkWidths[i] || 1) * 1.2));
+    const half = arrowLen * 0.48;
+    const baseX = tipX - ux * arrowLen;
+    const baseY = tipY - uy * arrowLen;
+    const px = -uy * half;
+    const py = ux * half;
+    arrowCtx.beginPath();
+    arrowCtx.moveTo(tipX, tipY);
+    arrowCtx.lineTo(baseX + px, baseY + py);
+    arrowCtx.lineTo(baseX - px, baseY - py);
+    arrowCtx.closePath();
+    arrowCtx.fillStyle = linkRgba(i);
+    arrowCtx.fill();
+  }
+}
+
+function startArrowOverlay() {
+  if (isCanvasRenderer || !state.edges.arrows) return;
+  arrowCanvas.style.display = 'block';
+  if (arrowRafId != null) return;
+  const tick = () => {
+    drawArrowOverlay();
+    arrowRafId = requestAnimationFrame(tick);
+  };
+  arrowRafId = requestAnimationFrame(tick);
+}
+
+function stopArrowOverlay() {
+  if (arrowRafId != null) {
+    cancelAnimationFrame(arrowRafId);
+    arrowRafId = null;
+  }
+  arrowCtx.clearRect(0, 0, arrowCanvas.width, arrowCanvas.height);
+  arrowCanvas.style.display = 'none';
+}
+
+function syncArrowOverlay() {
+  if (!isCanvasRenderer && state.edges.arrows) startArrowOverlay();
+  else stopArrowOverlay();
+}
+
+function safeSetFocusedPoint(index) {
+  try {
+    if (typeof graph.setFocusedPointByIndex === 'function') {
+      graph.setFocusedPointByIndex(index == null ? undefined : index);
+    } else if (index == null && typeof graph.unselectPoints === 'function') {
+      graph.unselectPoints();
+    } else if (index != null && typeof graph.selectPointByIndex === 'function') {
+      graph.selectPointByIndex(index, true);
+    }
+  } catch (err) {
+    console.warn('focus update failed:', err);
+  }
+}
+
+function safeZoomToPoint(index, duration = 800, scale = 6) {
+  try {
+    if (typeof graph.zoomToPointByIndex === 'function') graph.zoomToPointByIndex(index, duration, scale, true);
+  } catch (err) {
+    console.warn('zoomToPointByIndex failed:', err);
+  }
+}
+
+function screenPointCandidates(spacePoint) {
+  if (typeof graph.spaceToScreenPosition !== 'function') return [];
+  try {
+    const sp = graph.spaceToScreenPosition(spacePoint);
+    if (!sp) return [];
+    const rect = div.getBoundingClientRect();
+    return [sp, [sp[0] + rect.left, sp[1] + rect.top]];
+  } catch (_) {
+    return [];
+  }
+}
+
+function pickPointFromEvent(ev) {
+  let positions;
+  try {
+    positions = typeof graph.getPointPositions === 'function' ? graph.getPointPositions() : pointPositions;
+  } catch (_) {
+    positions = pointPositions;
+  }
+  if (!positions || positions.length < N * 2) return null;
+
+  let best = null;
+  let bestD = Infinity;
+  for (let i = 0; i < N; i++) {
+    const candidates = screenPointCandidates([positions[i * 2], positions[i * 2 + 1]]);
+    for (const sp of candidates) {
+      const dx = sp[0] - ev.clientX;
+      const dy = sp[1] - ev.clientY;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { best = i; bestD = d; }
+    }
+  }
+  const radius = 18;
+  return bestD <= radius * radius ? best : null;
+}
+
+function pointIndexFromEvent(ev) {
+  return pickPointFromEvent(ev) ?? state.hovered ?? state.focused;
+}
+function handleGraphDoubleClick(ev) {
   ev.preventDefault();
+  ev.stopPropagation();
+  if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+  const index = pointIndexFromEvent(ev);
+  if (index == null) return;
   hideNodeContextMenu();
   drillIntoNode(index);
-});
-
+}
+div.addEventListener('dblclick', handleGraphDoubleClick, { capture: true });
 div.addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
-  const index = state.hovered;
+  const index = pointIndexFromEvent(ev);
   if (index != null) showNodeContextMenu(index, ev.clientX, ev.clientY);
 });
 
@@ -962,7 +1162,15 @@ applyPointSizeScale();
 applyPointOpacity();
 applyLinkWidthScale();
 applyLinkOpacity();
-if (graph instanceof CanvasFallbackGraph) graph.fitView();
+if (isCanvasRenderer) {
+  document.body.classList.add('fallback-mode');
+  const heading = document.getElementById('simulation-heading');
+  if (heading) heading.textContent = 'Layout';
+  graph.fitView();
+  hideGraphLoading();
+} else {
+  pauseAndCentre(900);
+}
 
 // ============================================================ //
 //                       FOCUS / SELECTION                      //
@@ -970,7 +1178,8 @@ if (graph instanceof CanvasFallbackGraph) graph.fitView();
 
 function setFocused(i) {
   state.focused = (i == null) ? null : i;
-  graph.setFocusedPointByIndex(state.focused == null ? undefined : state.focused);
+  safeSetFocusedPoint(state.focused);
+  if (state.focused != null) setBfsSeedFromNode(state.focused);
   rebuildPointColors();
   rebuildLinkColors();
   rebuildLinkWidths();
@@ -990,7 +1199,7 @@ function focusOnNode(i) {
   // Wait one frame so the focus rebuild lands before the zoom starts.
   requestAnimationFrame(() => {
     try {
-      graph.zoomToPointByIndex(i, 800, 6, true);
+      safeZoomToPoint(i, 800, 6);
     } catch (err) {
       console.warn('zoomToPointByIndex failed:', err);
     }
@@ -1105,8 +1314,22 @@ addEventListener('click', (ev) => {
 addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') hideNodeContextMenu();
 });
-let paused = false;
+let paused = !isCanvasRenderer;
 const btnPause = document.getElementById('btn-pause');
+if (paused) btnPause.textContent = 'Resume';
+
+function pauseAndCentre(delay = 650, message = 'Centering graph...') {
+  if (isCanvasRenderer) return;
+  showGraphLoading(message);
+  setTimeout(() => {
+    graph.fitView(650);
+    graph.pause();
+    paused = true;
+    btnPause.textContent = 'Resume';
+    pokeRender();
+    hideGraphLoading();
+  }, delay);
+}
 
 document.getElementById('btn-fit').onclick = () => graph.fitView(750);
 btnPause.onclick = () => {
@@ -1117,19 +1340,37 @@ btnPause.onclick = () => {
 document.getElementById('btn-restart').onclick = () => {
   paused = false; btnPause.textContent = 'Pause';
   graph.start(1.0);
+  pauseAndCentre(1200, 'Restarting layout...');
 };
-function applyLayout({ fit = true, restart = true } = {}) {
-  seedPositions();
-  graph.setPointPositions(pointPositions);
-  if (restart) {
-    paused = false; btnPause.textContent = 'Pause';
-    graph.start(1.0);
-  } else {
-    pokeRender();
-  }
-  if (fit) setTimeout(() => graph.fitView(750), 120);
+function settleLayoutView({ fit = true, message = 'Applying layout...' } = {}) {
+  showGraphLoading(message);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (fit) graph.fitView(750);
+      graph.pause();
+      paused = true;
+      btnPause.textContent = 'Resume';
+      pokeRender();
+      hideGraphLoading();
+    });
+  });
 }
 
+function applyLayout({ fit = true } = {}) {
+  showGraphLoading('Applying layout...');
+  if (!isCanvasRenderer) graph.pause();
+  seedPositions();
+  graph.setPointPositions(pointPositions);
+  pokeRender();
+
+  if (isCanvasRenderer) {
+    if (fit) graph.fitView(750);
+    hideGraphLoading();
+    return;
+  }
+
+  settleLayoutView({ fit, message: 'Applying layout...' });
+}
 document.getElementById('btn-reset').onclick = () => applyLayout();
 
 function bindSlider(sliderId, valueId, getter, setter, onChange) {
@@ -1525,6 +1766,7 @@ function queueNextCrumb(label) {
     document.getElementById('legend').style.display = 'none';
     document.getElementById('stats').textContent = '0 nodes · 0 edges';
     bfsSeedInput.focus();
+    hideGraphLoading();
     return;
   }
 
@@ -1600,6 +1842,7 @@ async function bfsResolveSeed(payload) {
 }
 
 function navigateTo(seedId, maxDepth, opts) {
+  showGraphLoading(seedId != null ? 'Opening subgraph...' : 'Opening full graph...');
   saveUiSettings();
   // opts: { full: bool } — explicit "full graph" navigation
   const u = new URL(window.location.href);
@@ -1673,14 +1916,16 @@ document.getElementById('btn-bfs-run').onclick = async () => {
   const payload = seedIdMatch
     ? { seed_id: parseInt(seedIdMatch[1], 10), max_depth: depth }
     : { seed_label: raw, max_depth: depth };
+  showGraphLoading('Resolving seed...');
   try {
     const result = await bfsResolveSeed(payload);
     if (result.seed_id == null) {
       bfsErr.textContent = 'No node matched that label.';
+      hideGraphLoading();
       return;
     }
     navigateTo(result.seed_id, depth, { label: raw.replace(/^#\s*/, '#') + ' depth ' + depth });
-  } catch (_) { /* error already shown */ }
+  } catch (_) { hideGraphLoading(); /* error already shown */ }
 };
 
 document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true, label: 'Full graph' });

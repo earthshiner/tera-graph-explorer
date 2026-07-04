@@ -24,6 +24,26 @@
 
   #graph { position: absolute; top: 0; left: 0; right: 320px; bottom: 0; }
   #graph canvas { display: block; }
+  body.graph-pending #graph canvas,
+  body.graph-pending #labels { opacity: 0; }
+  #graph canvas, #labels { transition: opacity 0.18s ease; }
+
+  #graph-loading {
+    position: absolute; top: 0; left: 0; right: 320px; bottom: 0;
+    z-index: 8; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; color: var(--text);
+    background: rgba(0, 35, 60, 0.72); pointer-events: none;
+    opacity: 1; transition: opacity 0.18s ease;
+  }
+  #graph-loading.hidden { opacity: 0; visibility: hidden; }
+  #graph-loading .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.22);
+    border-top-color: var(--td-orange);
+    animation: spin 0.85s linear infinite;
+  }
+  #graph-loading-text { font-size: 12px; font-weight: 600; color: var(--text); }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* label overlay (DOM, on top of canvas) */
   #labels { position: absolute; top: 0; left: 0; right: 320px; bottom: 0;
@@ -77,6 +97,30 @@
   #info .text .hint { color: var(--muted); font-size: 11px; margin-top: 8px;
                       border-top: 1px solid var(--border); padding-top: 8px; }
 
+
+  #visual-controls {
+    position: absolute; top: 16px; left: 360px; right: 336px;
+    min-height: 68px; padding: 10px 12px; z-index: 9;
+    display: flex; align-items: stretch; gap: 12px;
+    box-sizing: border-box;
+  }
+  #visual-controls h2 {
+    margin: 0; color: var(--td-orange); font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.7px; white-space: nowrap;
+  }
+  .visual-group { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .visual-group-nodes { flex: 1 1 47%; }
+  .visual-group-edges { flex: 1 1 53%; }
+  .visual-separator { width: 1px; background: var(--border); flex: 0 0 auto; }
+  .visual-item { display: flex; align-items: center; gap: 6px; min-width: 130px; }
+  .visual-item label,
+  .visual-check { color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .visual-check { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .visual-check input[type="checkbox"] { accent-color: var(--td-orange); cursor: pointer; }
+  .visual-slider { min-width: 118px; flex: 1 1 128px; }
+  .visual-slider .field-head { margin-bottom: 4px; }
+  .visual-slider input[type="range"] { display: block; }
+  #visual-controls select { min-width: 104px; }
   #legend { position: absolute; bottom: 16px; left: 16px;
             padding: 12px 14px; z-index: 10; min-width: 140px; }
   #legend h2 { margin: 0 0 8px 0; font-size: 10px; font-weight: 600;
@@ -88,6 +132,7 @@
                     flex-shrink: 0; }
 
   #controls { position: absolute; top: 0; right: 0; bottom: 0; width: 320px;
+              box-sizing: border-box;
               background: var(--panel-solid); border-left: 1px solid var(--border);
               padding: 16px 18px; overflow-y: auto; z-index: 10;
               box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4); }
@@ -128,6 +173,9 @@
                             border-color: var(--td-orange);
                             color: var(--td-white); }
   .btn-row button.primary:hover { background: #e35402; border-color: #e35402; }
+
+  .fallback-mode .webgl-only { display: none; }
+  .fallback-mode .btn-row { display: grid; grid-template-columns: 1fr; }
 
   .field { margin-bottom: 11px; }
   .field-head { display: flex; justify-content: space-between; align-items: center;
@@ -204,7 +252,7 @@
            padding: 16px 20px; background: #2a1a1a; border: 1px solid #5a2a2a;
            border-radius: 8px; color: #ffb4b4; font-family: monospace;
            max-width: 600px; display: none; z-index: 100; }
-  #notice { position: absolute; top: 14px; left: 332px; right: 336px;
+  #notice { position: absolute; top: 104px; left: 332px; right: 336px;
             display: none; align-items: center; justify-content: space-between;
             gap: 12px; padding: 8px 10px; background: rgba(16, 45, 66, 0.92);
             border: 1px solid var(--border); border-radius: 6px;
