@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from branding import brand_css, client_brand, load_brand_config
 from graph_data import DEFAULT_DATABASE
 
 
@@ -27,13 +28,14 @@ HTML_TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__DATABASE__ · Teradata Graph Explorer</title>
+<title>__DATABASE__ · __BRAND_NAME__ Graph Explorer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
 <style>
 __STYLE__
+__BRAND_STYLE__
 </style>
 </head>
 <body>
@@ -52,7 +54,7 @@ __STYLE__
 </div>
 
 <div id="info" class="panel">
-  <img src="__LOGO_URI__" alt="Teradata">
+  <img src="__LOGO_URI__" alt="__BRAND_NAME__">
   <div class="text">
     <h1>__DATABASE__</h1>
     <div class="stats" id="stats">loading…</div>
@@ -133,12 +135,30 @@ __STYLE__
   <section>
     <h2>Search</h2>
     <input id="search-input" type="text" placeholder="Search by label…" autocomplete="off">
+    <div class="search-range" aria-label="Search by node importance range">
+      <label>Importance</label>
+      <input id="search-importance-min" type="number" min="0" max="1" step="0.05" placeholder="min">
+      <span>to</span>
+      <input id="search-importance-max" type="number" min="0" max="1" step="0.05" placeholder="max">
+    </div>
+    <div class="search-filters" aria-label="Search by node attributes">
+      <select id="search-community" aria-label="Community filter"><option value="">Any community</option></select>
+      <select id="search-category" aria-label="Category filter"><option value="">Any category</option></select>
+      <select id="search-role" aria-label="Role filter"><option value="">Any role</option></select>
+    </div>
     <div id="search-results"></div>
     <div id="search-status"></div>
   </section>
 
   <section>
     <h2 id="simulation-heading">Simulation</h2>
+    <div class="row-h">
+      <label for="sel-renderer">Renderer</label>
+      <select id="sel-renderer">
+        <option value="webgl">WebGL</option>
+        <option value="canvas">Canvas</option>
+      </select>
+    </div>
     <div class="btn-row">
       <button id="btn-fit">Fit view</button>
       <button id="btn-pause" class="webgl-only">Pause</button>
@@ -201,17 +221,22 @@ __SCRIPT__
 """
 
 
-def render_html(data: dict, output_path: Path) -> None:
-    output_path.write_text(render_html_str(data), encoding="utf-8")
+def render_html(data: dict, output_path: Path, brand: dict | None = None) -> None:
+    output_path.write_text(render_html_str(data, brand), encoding="utf-8")
 
 
-def render_html_str(data: dict) -> str:
+def render_html_str(data: dict, brand: dict | None = None) -> str:
     """Same as render_html but returns the string (for the HTTP server)."""
-    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    active_brand = brand or load_brand_config(None)
+    payload_data = dict(data)
+    payload_data["_brand"] = client_brand(active_brand)
+    payload = json.dumps(payload_data, separators=(",", ":"), ensure_ascii=False)
     database = data.get("_database", DEFAULT_DATABASE)
     return (HTML_TEMPLATE
             .replace("__STYLE__", read_asset("graph.css"))
+            .replace("__BRAND_STYLE__", brand_css(active_brand))
             .replace("__SCRIPT__", read_asset("graph.js"))
             .replace("__DATA__", payload)
             .replace("__DATABASE__", database)
-            .replace("__LOGO_URI__", TERADATA_LOGO_URI))
+            .replace("__BRAND_NAME__", active_brand["name"])
+            .replace("__LOGO_URI__", active_brand.get("logo_uri") or TERADATA_LOGO_URI))
