@@ -1,0 +1,18 @@
+{
+  "name": "Westpac",
+  "logo_text": "Westpac",
+  "colors": {
+    "accent": "#DA1710",
+    "background": "#1F1F1F",
+    "background_light": "#333333",
+    "background_lighter": "#4A4A4A",
+    "panel": "rgba(51, 51, 51, 0.94)",
+    "panel_solid": "#2B2B2B",
+    "border": "#5C5C5C",
+    "border_light": "#444444",
+    "text": "#FFFFFF",
+    "text_dim": "rgba(255, 255, 255, 0.72)",
+    "muted": "rgba(255, 255, 255, 0.52)"
+  },
+  "palette": ["#DA1710", "#FFFFFF", "#F7C948", "#3B82F6", "#10B981", "#A855F7", "#F97316", "#06B6D4"]
+}

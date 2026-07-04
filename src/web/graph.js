@@ -21,6 +21,8 @@ function showFatalError(message) {
 }
 
 const RENDERER_NOTICE_KEY = 'tera-graph-renderer-notice-seen-v1';
+const RENDERER_MODE_KEY = 'tera-graph-renderer-mode-v1';
+const requestedRenderer = sessionStorage.getItem(RENDERER_MODE_KEY) === 'canvas' ? 'canvas' : 'webgl';
 let noticeTimer = null;
 function showRendererNotice(message) {
   if (sessionStorage.getItem(RENDERER_NOTICE_KEY) === '1') return;
@@ -52,8 +54,9 @@ function supportsRequiredWebGL() {
 }
 
 const HAS_WEBGL = supportsRequiredWebGL();
+const FORCE_CANVAS = requestedRenderer === 'canvas';
 let Graph = null;
-if (HAS_WEBGL) {
+if (HAS_WEBGL && !FORCE_CANVAS) {
   try {
     ({ Graph } = await import('https://cdn.jsdelivr.net/npm/@cosmos.gl/graph@2/+esm'));
   } catch (err) {
@@ -62,7 +65,7 @@ if (HAS_WEBGL) {
       'Right-click a node to drill-down into its subgraph.'
     );
   }
-} else {
+} else if (!HAS_WEBGL) {
   showRendererNotice(
     'Canvas fallback active: WebGL2 is unavailable in this browser session. ' +
     'Right-click a node to drill-down into its subgraph.'
@@ -70,6 +73,9 @@ if (HAS_WEBGL) {
 }
 
 const data = __DATA__;
+const BRAND = data._brand || {};
+const BRAND_ACCENT = BRAND.accent || '#FF5F02';
+const BRAND_BACKGROUND = BRAND.background || '#00233C';
 const N = data.nodes.length;
 const L = data.links.length;
 const idIndex = new Map(data.nodes.map((n, i) => [n.id, i]));
@@ -92,16 +98,18 @@ let maxNodeDegree = 1;
 for (let i = 0; i < N; i++) maxNodeDegree = Math.max(maxNodeDegree, nodeDegrees[i]);
 
 // ---- palette ---- //
-const PALETTE = [
-  '#FF5F02',  // Teradata Orange (primary)
-  '#4A90E2',  // brand blue
-  '#7ED321',  // brand green
-  '#D8BFD8',  // brand lavender
-  '#FFD93D',  // warm yellow
-  '#22D3EE',  // cyan
-  '#F472B6',  // pink
-  '#FBBF24',  // amber
-];
+const PALETTE = (BRAND.palette && BRAND.palette.length)
+  ? BRAND.palette
+  : [
+      '#FF5F02',  // Teradata Orange (primary)
+      '#4A90E2',  // brand blue
+      '#7ED321',  // brand green
+      '#D8BFD8',  // brand lavender
+      '#FFD93D',  // warm yellow
+      '#22D3EE',  // cyan
+      '#F472B6',  // pink
+      '#FBBF24',  // amber
+    ];
 function buildColorMap(attr) {
   const values = [...new Set(data.nodes.map(n => n[attr]).filter(v => v != null))].sort();
   return { values,
@@ -117,7 +125,7 @@ const hexToRgb = (h) => [
   parseInt(h.slice(3, 5), 16) / 255,
   parseInt(h.slice(5, 7), 16) / 255,
 ];
-const ORANGE_RGB = hexToRgb('#FF5F02');
+const ORANGE_RGB = hexToRgb(BRAND_ACCENT);
 
 function browserEventFromArgs(positionOrEvent, maybeEvent) {
   return maybeEvent || positionOrEvent || null;
@@ -844,7 +852,7 @@ class CanvasFallbackGraph {
 }
 // ---- initial cosmos.gl config ---- //
 const initialConfig = {
-  backgroundColor: '#00233C',
+  backgroundColor: BRAND_BACKGROUND,
   spaceSize: 4096,
   pointSizeScale: state.nodes.sizeScale,
   linkWidthScale: state.edges.widthScale,
@@ -871,14 +879,14 @@ const initialConfig = {
 
   hoveredPointCursor: 'pointer',
   renderHoveredPointRing: true,
-  hoveredPointRingColor: '#FF5F02',
-  focusedPointRingColor: '#FF5F02',
+  hoveredPointRingColor: BRAND_ACCENT,
+  focusedPointRingColor: BRAND_ACCENT,
 
   // Edge interaction (cosmos.gl v2.5+). When the loaded CDN version is
   // older these are silently ignored — graceful degradation; node
   // interaction continues to work either way.
   hoveredLinkCursor: 'pointer',
-  hoveredLinkColor: '#FF5F02',
+  hoveredLinkColor: BRAND_ACCENT,
   hoveredLinkWidthIncrease: 2,
 
   onPointMouseOver: (index) => {
@@ -961,6 +969,19 @@ try {
 }
 
 const isCanvasRenderer = graph instanceof CanvasFallbackGraph;
+const rendererSelect = document.getElementById('sel-renderer');
+if (rendererSelect) {
+  rendererSelect.value = isCanvasRenderer ? 'canvas' : 'webgl';
+  rendererSelect.title = isCanvasRenderer
+    ? 'Canvas renderer active. Switch to WebGL for larger graphs when available.'
+    : 'WebGL renderer active. Switch to Canvas for compatibility/debugging.';
+  rendererSelect.addEventListener('change', (ev) => {
+    const mode = ev.target.value === 'canvas' ? 'canvas' : 'webgl';
+    sessionStorage.setItem(RENDERER_MODE_KEY, mode);
+    showGraphLoading(`Switching to ${mode === 'canvas' ? 'Canvas' : 'WebGL'}...`);
+    window.location.reload();
+  });
+}
 const arrowCanvas = document.createElement('canvas');
 const arrowCtx = arrowCanvas.getContext('2d');
 arrowCanvas.style.position = 'absolute';
@@ -1001,6 +1022,24 @@ function linkRgba(i) {
          `${Math.round((linkColors[i * 4 + 2] ?? 1) * 255)},${Math.max(0.28, alpha)})`;
 }
 
+function webglNodeScreenRadius(index, positions, radiusCache) {
+  if (radiusCache.has(index)) return radiusCache.get(index);
+  const sizeScale = Math.max(0.3, state.nodes.sizeScale || 1);
+  const base = pointSizes[index] || 4;
+  const x = positions[index * 2];
+  const y = positions[index * 2 + 1];
+  const centre = projectToGraphPoint([x, y]);
+  const xStep = projectToGraphPoint([x + 1, y]);
+  const yStep = projectToGraphPoint([x, y + 1]);
+  const xScale = centre && xStep ? Math.hypot(xStep[0] - centre[0], xStep[1] - centre[1]) : 0;
+  const yScale = centre && yStep ? Math.hypot(yStep[0] - centre[0], yStep[1] - centre[1]) : 0;
+  const projected = base * sizeScale * Math.max(xScale, yScale);
+  const estimated = base * (2.7 + sizeScale * 2.7);
+  const radius = Math.max(10, Math.min(64, Number.isFinite(projected) && projected > 0 ? projected : estimated));
+  radiusCache.set(index, radius);
+  return radius;
+}
+
 function drawArrowOverlay() {
   if (isCanvasRenderer || !state.edges.arrows) return;
   resizeArrowCanvas();
@@ -1014,6 +1053,7 @@ function drawArrowOverlay() {
   }
   if (!positions || positions.length < N * 2) return;
 
+  const radiusCache = new Map();
   const maxArrows = Math.min(L, 60000);
   for (let i = 0; i < maxArrows; i++) {
     const s = linksArr[i * 2], t = linksArr[i * 2 + 1];
@@ -1027,10 +1067,10 @@ function drawArrowOverlay() {
     if (len < 8) continue;
     const ux = dx / len;
     const uy = dy / len;
-    const targetRadius = Math.max(4, (pointSizes[t] || 4) * (state.nodes.sizeScale || 1) * 1.25);
-    const tipX = target[0] - ux * targetRadius;
-    const tipY = target[1] - uy * targetRadius;
+    const targetRadius = webglNodeScreenRadius(t, positions, radiusCache);
     const arrowLen = Math.max(8, Math.min(14, 7 + (linkWidths[i] || 1) * 1.2));
+    const tipX = target[0] - ux * (targetRadius + 1);
+    const tipY = target[1] - uy * (targetRadius + 1);
     const half = arrowLen * 0.48;
     const baseX = tipX - ux * arrowLen;
     const baseY = tipY - uy * arrowLen;
@@ -1450,16 +1490,77 @@ document.getElementById('chk-arrows').addEventListener('change', (ev) => {
 //                          SEARCH                              //
 // ============================================================ //
 
-const searchInput   = document.getElementById('search-input');
-const searchResults = document.getElementById('search-results');
-const searchStatus  = document.getElementById('search-status');
+const searchInput         = document.getElementById('search-input');
+const searchImportanceMin = document.getElementById('search-importance-min');
+const searchImportanceMax = document.getElementById('search-importance-max');
+const searchCommunity     = document.getElementById('search-community');
+const searchCategory      = document.getElementById('search-category');
+const searchRole          = document.getElementById('search-role');
+const searchResults       = document.getElementById('search-results');
+const searchStatus        = document.getElementById('search-status');
+const searchAttributeSelects = [
+  { el: searchCommunity, attr: 'community' },
+  { el: searchCategory, attr: 'category' },
+  { el: searchRole, attr: 'role' },
+];
+
+function populateSearchAttributeSelects() {
+  searchAttributeSelects.forEach(({ el, attr }) => {
+    colorMaps[attr].values.forEach((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      el.appendChild(option);
+    });
+  });
+}
+populateSearchAttributeSelects();
+
+function parseImportanceInput(input) {
+  const raw = (input?.value || '').trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(1, value));
+}
+
+function currentImportanceRange() {
+  let min = parseImportanceInput(searchImportanceMin);
+  let max = parseImportanceInput(searchImportanceMax);
+  if (min != null && max != null && min > max) [min, max] = [max, min];
+  return { min, max, active: min != null || max != null };
+}
+
+function formatImportance(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : 'n/a';
+}
+
+function currentAttributeFilters() {
+  return searchAttributeSelects
+    .map(({ el, attr }) => ({ attr, value: el.value }))
+    .filter(({ value }) => value !== '');
+}
+
+function formatAttributeName(attr) {
+  return attr.charAt(0).toUpperCase() + attr.slice(1);
+}
+
+function clearSearch() {
+  searchInput.value = '';
+  searchImportanceMin.value = '';
+  searchImportanceMax.value = '';
+  searchAttributeSelects.forEach(({ el }) => { el.value = ''; });
+  runSearch('');
+}
 
 function runSearch(query) {
   const q = (query || '').trim().toLowerCase();
+  const range = currentImportanceRange();
+  const attributeFilters = currentAttributeFilters();
   state.search.query = q;
   searchResults.innerHTML = '';
 
-  if (!q) {
+  if (!q && !range.active && attributeFilters.length === 0) {
     state.search.matches = new Set();
     searchStatus.textContent = '';
     rebuildPointColors();
@@ -1468,8 +1569,17 @@ function runSearch(query) {
 
   const matches = [];
   data.nodes.forEach((n, i) => {
-    if (n.label && n.label.toLowerCase().includes(q)) matches.push(i);
+    const labelOk = !q || (n.label && n.label.toLowerCase().includes(q));
+    const importance = Number(n.importance ?? 0);
+    const minOk = range.min == null || importance >= range.min;
+    const maxOk = range.max == null || importance <= range.max;
+    const attributesOk = attributeFilters.every(({ attr, value }) => n[attr] === value);
+    if (labelOk && minOk && maxOk && attributesOk) matches.push(i);
   });
+
+  if (range.active) {
+    matches.sort((a, b) => Number(data.nodes[b].importance ?? 0) - Number(data.nodes[a].importance ?? 0));
+  }
   state.search.matches = new Set(matches);
 
   matches.slice(0, 8).forEach(i => {
@@ -1477,33 +1587,64 @@ function runSearch(query) {
     const item = document.createElement('div');
     item.className = 'item';
     item.innerHTML = `<span class="label">${n.label}</span>` +
-                     `<span class="meta">${n.category} · ${n.community}</span>`;
+                     `<span class="meta">${n.category} · ${n.community} · ${formatImportance(n.importance)}</span>`;
     item.onclick = () => focusOnNode(i);
     searchResults.appendChild(item);
   });
 
+  const rangeText = range.active
+    ? `importance ${range.min == null ? '0.00' : range.min.toFixed(2)}–${range.max == null ? '1.00' : range.max.toFixed(2)}`
+    : '';
+  const attributeText = attributeFilters.map(({ attr, value }) => `${formatAttributeName(attr)} ${value}`);
+  const filterText = [rangeText, ...attributeText].filter(Boolean).join(' · ');
+  const suffix = filterText ? ` · ${filterText}` : '';
   if (matches.length === 0) {
-    searchStatus.textContent = 'No matches';
+    searchStatus.textContent = `No matches${suffix}`;
   } else if (matches.length <= 8) {
-    searchStatus.textContent = `${matches.length} match${matches.length === 1 ? '' : 'es'}`;
+    searchStatus.textContent = `${matches.length} match${matches.length === 1 ? '' : 'es'}${suffix}`;
   } else {
-    searchStatus.textContent = `Showing 8 of ${matches.length} matches`;
+    searchStatus.textContent = `Showing 8 of ${matches.length} matches${suffix}`;
   }
 
   rebuildPointColors();
   if (matches.length === 1) focusOnNode(matches[0]);
 }
 
+function focusFirstSearchMatch() {
+  const first = [...state.search.matches][0];
+  if (first != null) focusOnNode(first);
+}
+
 searchInput.addEventListener('input', (ev) => runSearch(ev.target.value));
 searchInput.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
-    searchInput.value = '';
-    runSearch('');
+    clearSearch();
     setFocused(null);
   } else if (ev.key === 'Enter') {
-    const first = [...state.search.matches][0];
-    if (first != null) focusOnNode(first);
+    focusFirstSearchMatch();
   }
+});
+[searchImportanceMin, searchImportanceMax].forEach((input) => {
+  input.addEventListener('input', () => runSearch(searchInput.value));
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      clearSearch();
+      setFocused(null);
+    } else if (ev.key === 'Enter') {
+      focusFirstSearchMatch();
+    }
+  });
+});
+searchAttributeSelects.forEach(({ el }) => {
+  el.addEventListener('change', () => runSearch(searchInput.value));
+  el.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      clearSearch();
+      setFocused(null);
+    } else if (ev.key === 'Enter') {
+      focusFirstSearchMatch();
+    }
+  });
 });
 
 // ============================================================ //

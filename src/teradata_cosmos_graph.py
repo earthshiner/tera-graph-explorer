@@ -46,6 +46,7 @@ except ImportError:
     sys.exit("Missing dependency. Install with:  pip install teradatasql")
 
 
+from branding import load_brand_config
 from graph_data import (
     DEFAULT_DATABASE,
     fetch_bfs_subgraph,
@@ -61,7 +62,8 @@ from html_renderer import render_html, render_html_str
 # --------------------------------------------------------------------------- #
 
 def serve(host: str, user: str, password: str, logmech: str, database: str,
-          port: int, initial_seed_id, initial_max_depth: int) -> None:
+          port: int, initial_seed_id, initial_max_depth: int,
+          brand: dict) -> None:
     """Run a small HTTP server. GET / serves the visualisation HTML
     (with optional ?seed_id=&max_depth= query params for a BFS subgraph),
     and POST /api/bfs resolves a seed label to a node_id."""
@@ -109,7 +111,7 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
             print("  empty landing page (awaiting user input)")
             data = {"nodes": [], "links": [], "_empty": True, "_database": database}
 
-        html = render_html_str(data)
+        html = render_html_str(data, brand)
         if len(cache) >= CACHE_LIMIT:
             cache.pop(next(iter(cache)))
         cache[key] = html
@@ -229,6 +231,8 @@ def main() -> None:
     parser.add_argument("--no-open",  action="store_true")
     parser.add_argument("--port",     type=int, default=8765,
                         help="HTTP port (serve mode, default 8765)")
+    parser.add_argument("--brand-config", default=None,
+                        help="Optional JSON branding profile for logo and colours")
 
     parser.add_argument("--seed-id",    type=int, default=None,
                         help="Seed node_id for BFS. "
@@ -253,6 +257,11 @@ def main() -> None:
     if args.max_depth < 1 or args.max_depth > 6:
         sys.exit("--max-depth must be between 1 and 6")
 
+    try:
+        brand = load_brand_config(args.brand_config)
+    except ValueError as exc:
+        sys.exit(f"Invalid --brand-config value: {exc}")
+
     # Resolve --seed-label up front, regardless of mode
     seed_id = args.seed_id
     if seed_id is None and args.seed_label:
@@ -267,7 +276,7 @@ def main() -> None:
 
     if args.mode == "serve":
         serve(args.host, args.user, args.password, args.logmech, args.database,
-              args.port, seed_id, args.max_depth)
+              args.port, seed_id, args.max_depth, brand)
         return
 
     # static mode
@@ -284,7 +293,7 @@ def main() -> None:
 
     print(f"  fetched {len(data['nodes'])} nodes, {len(data['links'])} edges")
     out = Path(args.output).resolve()
-    render_html(data, out)
+    render_html(data, out, brand)
     print(f"→ Wrote {out}")
     if not args.no_open:
         webbrowser.open(out.as_uri())
