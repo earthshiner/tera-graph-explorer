@@ -14,6 +14,35 @@ FILTER_COLUMNS = {
 }
 EDGE_FILTER_KEYS = {"edge_type", "strong"}
 STRONG_EDGE_WEIGHT = 0.70
+QUERY_BAND_APP = "tera_graph_explorer"
+QUERY_BAND_MAX_VALUE_LEN = 120
+
+
+def query_band_value(value) -> str:
+    """Return a compact value that is safe for a Teradata query band."""
+    if value is None:
+        return ""
+    text = str(value).replace("'", "").replace(";", ",").replace("=", ":")
+    text = " ".join(text.split())
+    return text[:QUERY_BAND_MAX_VALUE_LEN]
+
+
+def query_band_string(**pairs) -> str:
+    """Build a Teradata query band string from non-empty key/value pairs."""
+    band = {"app": QUERY_BAND_APP, **pairs}
+    parts = []
+    for key, value in band.items():
+        safe_value = query_band_value(value)
+        if safe_value:
+            parts.append(f"{key}={safe_value}")
+    return ";".join(parts) + ";"
+
+
+def set_query_band(conn, **pairs) -> None:
+    """Set session query band values for DBQL/audit traceability."""
+    band = query_band_string(**pairs)
+    with conn.cursor() as cur:
+        cur.execute(f"SET QUERY_BAND = '{band}' FOR SESSION")
 
 
 def qualify_table(database: str, table: str) -> str:
@@ -63,6 +92,7 @@ def fetch_full_graph(conn, database: str) -> dict:
     """Pull every node and edge from the configured graph database."""
     node_table = qualify_table(database, "graph_nodes")
     edge_table = qualify_table(database, "graph_edges")
+    set_query_band(conn, action="full_graph", graph_db=database)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT node_id, node_label, category, community, importance, node_role "
@@ -112,6 +142,17 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
     )
     final_edge_filter, final_edge_params = edge_filter_sql(
         "", edge_filter_key, edge_filter_value
+    )
+    set_query_band(
+        conn,
+        action="bfs_subgraph",
+        graph_db=database,
+        seed_id=seed_id,
+        max_depth=max_depth,
+        node_filter_key=filter_key,
+        node_filter_value=filter_value,
+        edge_filter_key=edge_filter_key,
+        edge_filter_value=edge_filter_value,
     )
 
     bfs_sql = (
@@ -200,6 +241,7 @@ def fetch_bfs_subgraph(conn, database: str, seed_id: int, max_depth: int,
 def resolve_seed_label(conn, database: str, label: str) -> "int | None":
     """Look up a node_id by exact-match node_label (first hit wins)."""
     node_table = qualify_table(database, "graph_nodes")
+    set_query_band(conn, action="resolve_seed_label", graph_db=database)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT node_id "

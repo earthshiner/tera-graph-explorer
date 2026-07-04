@@ -129,6 +129,9 @@ __BRAND_STYLE__
       <button id="btn-bfs-run" class="primary">Open seed</button>
       <button id="btn-bfs-reset">Full graph</button>
     </div>
+    <div class="btn-row">
+      <button id="btn-svg-export">Download SVG</button>
+    </div>
     <div id="bfs-error"></div>
   </section>
 
