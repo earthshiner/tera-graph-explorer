@@ -40,7 +40,10 @@ __STYLE__
 
 <div id="graph"></div>
 <div id="labels"></div>
-
+<div id="graph-loading" role="status" aria-live="polite">
+  <div class="spinner"></div>
+  <div id="graph-loading-text">Centering graph...</div>
+</div>
 <div id="empty-state" class="panel" style="display: none;">
   <div class="empty-icon">→</div>
   <h2>Awaiting input</h2>
@@ -57,6 +60,43 @@ __STYLE__
   </div>
 </div>
 
+<div id="visual-controls" class="panel">
+  <div class="visual-group visual-group-nodes">
+    <h2>Nodes</h2>
+    <div class="visual-item">
+      <label for="sel-colorBy">Colour</label>
+      <select id="sel-colorBy">
+        <option value="community">Community</option>
+        <option value="category">Category</option>
+        <option value="role">Role</option>
+      </select>
+    </div>
+    <label class="visual-check"><input id="chk-nodeLabels" type="checkbox"> Labels</label>
+    <div class="visual-slider">
+      <div class="field-head"><label for="s-sizeScale">Size</label><span class="val" id="v-sizeScale">0.30</span></div>
+      <input id="s-sizeScale" type="range" min="0.3" max="3" step="0.05" value="0.3">
+    </div>
+    <div class="visual-slider">
+      <div class="field-head"><label for="s-nodeOpacity">Opacity</label><span class="val" id="v-nodeOpacity">1.00</span></div>
+      <input id="s-nodeOpacity" type="range" min="0.1" max="1" step="0.05" value="1">
+    </div>
+  </div>
+  <div class="visual-separator"></div>
+  <div class="visual-group visual-group-edges">
+    <h2>Edges</h2>
+    <label class="visual-check"><input id="chk-curved" type="checkbox" checked> Curved</label>
+    <label class="visual-check"><input id="chk-arrows" type="checkbox"> Arrows</label>
+    <label class="visual-check"><input id="chk-edgeLabels" type="checkbox"> Labels</label>
+    <div class="visual-slider">
+      <div class="field-head"><label for="s-widthScale">Width</label><span class="val" id="v-widthScale">1.00</span></div>
+      <input id="s-widthScale" type="range" min="0.3" max="3" step="0.05" value="1">
+    </div>
+    <div class="visual-slider">
+      <div class="field-head"><label for="s-edgeOpacity">Opacity</label><span class="val" id="v-edgeOpacity">1.00</span></div>
+      <input id="s-edgeOpacity" type="range" min="0" max="1" step="0.05" value="1">
+    </div>
+  </div>
+</div>
 <div id="legend" class="panel">
   <h2 id="legend-heading">Communities</h2>
   <div id="legend-rows"></div>
@@ -98,13 +138,13 @@ __STYLE__
   </section>
 
   <section>
-    <h2>Simulation</h2>
+    <h2 id="simulation-heading">Simulation</h2>
     <div class="btn-row">
       <button id="btn-fit">Fit view</button>
-      <button id="btn-pause">Pause</button>
+      <button id="btn-pause" class="webgl-only">Pause</button>
     </div>
     <div class="btn-row">
-      <button id="btn-restart">Restart</button>
+      <button id="btn-restart" class="webgl-only">Restart</button>
       <button id="btn-reset" class="primary">Reset layout</button>
     </div>
     <div class="row-h">
@@ -117,76 +157,34 @@ __STYLE__
         <option value="grid">Packed grid</option>
       </select>
     </div>
-    <div class="field">
+    <div class="field webgl-only">
       <div class="field-head"><label for="s-gravity">Gravity</label>
                               <span class="val" id="v-gravity">0.25</span></div>
       <input id="s-gravity" type="range" min="0" max="1" step="0.05" value="0.25">
     </div>
-    <div class="field">
+    <div class="field webgl-only">
       <div class="field-head"><label for="s-repulsion">Repulsion</label>
                               <span class="val" id="v-repulsion">1.00</span></div>
       <input id="s-repulsion" type="range" min="0" max="2" step="0.05" value="1">
     </div>
-    <div class="field">
+    <div class="field webgl-only">
       <div class="field-head"><label for="s-linkSpring">Link spring</label>
                               <span class="val" id="v-linkSpring">1.00</span></div>
       <input id="s-linkSpring" type="range" min="0" max="2" step="0.05" value="1">
     </div>
-    <div class="field">
+    <div class="field webgl-only">
       <div class="field-head"><label for="s-linkDistance">Link distance</label>
                               <span class="val" id="v-linkDistance">10</span></div>
       <input id="s-linkDistance" type="range" min="1" max="50" step="1" value="10">
     </div>
-    <div class="field">
+    <div class="field webgl-only">
       <div class="field-head"><label for="s-friction">Friction</label>
                               <span class="val" id="v-friction">0.85</span></div>
       <input id="s-friction" type="range" min="0.5" max="1" step="0.01" value="0.85">
     </div>
   </section>
 
-  <section>
-    <h2>Nodes</h2>
-    <div class="row-h">
-      <label for="sel-colorBy">Colour by</label>
-      <select id="sel-colorBy">
-        <option value="community">Community</option>
-        <option value="category">Category</option>
-        <option value="role">Role</option>
-      </select>
-    </div>
-    <div class="checks">
-      <label><input id="chk-nodeLabels" type="checkbox"> Show labels</label>
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="s-sizeScale">Size scale</label>
-                              <span class="val" id="v-sizeScale">0.30</span></div>
-      <input id="s-sizeScale" type="range" min="0.3" max="3" step="0.05" value="0.3">
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="s-nodeOpacity">Opacity</label>
-                              <span class="val" id="v-nodeOpacity">1.00</span></div>
-      <input id="s-nodeOpacity" type="range" min="0.1" max="1" step="0.05" value="1">
-    </div>
-  </section>
 
-  <section>
-    <h2>Edges</h2>
-    <div class="checks">
-      <label><input id="chk-curved" type="checkbox" checked> Curved</label>
-      <label><input id="chk-arrows" type="checkbox"> Arrows</label>
-      <label><input id="chk-edgeLabels" type="checkbox"> Show labels</label>
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="s-widthScale">Width scale</label>
-                              <span class="val" id="v-widthScale">1.00</span></div>
-      <input id="s-widthScale" type="range" min="0.3" max="3" step="0.05" value="1">
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="s-edgeOpacity">Opacity</label>
-                              <span class="val" id="v-edgeOpacity">1.00</span></div>
-      <input id="s-edgeOpacity" type="range" min="0" max="1" step="0.05" value="1">
-    </div>
-  </section>
 
 </aside>
 
