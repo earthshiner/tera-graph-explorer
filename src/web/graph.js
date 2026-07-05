@@ -2224,6 +2224,221 @@ function downloadSubgraphSvg() {
     bfsErr.textContent = err.message || 'Could not export this subgraph.';
   }
 }
+function reportNodeName(node) {
+  if (!node) return 'Unknown entity';
+  const label = String(node.label || '').trim();
+  return label || `#${node.id}`;
+}
+
+function reportEntityKind(node) {
+  if (!node) return 'entity';
+  return String(node.role || node.category || 'entity').trim() || 'entity';
+}
+
+function reportEntityPhrase(node) {
+  const kind = reportEntityKind(node);
+  if (!kind || kind.toLowerCase() === 'entity') return reportNodeName(node);
+  return `${kind} ${reportNodeName(node)}`;
+}
+
+function reportPluralKind(kind) {
+  const clean = String(kind || 'entity').trim();
+  if (!clean || clean.toLowerCase() === 'entity') return 'entities';
+  if (/entities$/i.test(clean)) return clean;
+  if (/s$/i.test(clean)) return `${clean} entities`;
+  return `${clean} entities`;
+}
+
+function reportRelation(edge) {
+  const relation = String(edge && edge.type ? edge.type : '').trim();
+  if (!relation) return 'is connected to';
+  return relation.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+}
+
+function reportSentence(sourceNode, edge, targetNode, includeTargetKind = false) {
+  const target = includeTargetKind ? reportEntityPhrase(targetNode) : reportNodeName(targetNode);
+  return `${reportEntityPhrase(sourceNode)} ${reportRelation(edge)} ${target}.`;
+}
+
+function reportList(names) {
+  if (names.length <= 1) return names.join('');
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+}
+
+function reportEdgesByDepth(levels) {
+  const rows = [];
+  data.links.forEach((edge) => {
+    const sourceIndex = idIndex.get(edge.source);
+    const targetIndex = idIndex.get(edge.target);
+    if (sourceIndex == null || targetIndex == null) return;
+    const sourceLevel = levels[sourceIndex];
+    const targetLevel = levels[targetIndex];
+    if (sourceLevel < 0 || targetLevel < 0) return;
+    rows.push({
+      edge,
+      sourceIndex,
+      targetIndex,
+      depth: Math.max(sourceLevel, targetLevel),
+      sourceLevel,
+      targetLevel,
+    });
+  });
+  return rows.sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    const sourceCmp = reportNodeName(data.nodes[a.sourceIndex]).localeCompare(reportNodeName(data.nodes[b.sourceIndex]));
+    if (sourceCmp !== 0) return sourceCmp;
+    return reportNodeName(data.nodes[a.targetIndex]).localeCompare(reportNodeName(data.nodes[b.targetIndex]));
+  });
+}
+
+function reportEdgeDetailParts(edge) {
+  const details = [];
+  if (edge.weight != null) details.push(`weight ${edge.weight}`);
+  if (edge.strength != null) details.push(`strength ${edge.strength}`);
+  return details;
+}
+
+function reportEdgeLine(row, focusIndex = null) {
+  const sourceNode = data.nodes[row.sourceIndex];
+  const targetNode = data.nodes[row.targetIndex];
+  const details = reportEdgeDetailParts(row.edge);
+  const suffix = details.length ? ` (${details.join(', ')})` : '';
+  const upstream = focusIndex != null && row.targetIndex === focusIndex
+    ? ' [upstream into focus entity]'
+    : '';
+  return `- Depth ${row.depth}: ${reportNodeName(sourceNode)} --${reportRelation(row.edge)}--> ${reportNodeName(targetNode)}${suffix}${upstream}`;
+}
+function reportNarrativeGroups(levels) {
+  const groups = new Map();
+  reportEdgesByDepth(levels).forEach((row) => {
+    if (row.targetLevel !== row.sourceLevel + 1) return;
+    const targetNode = data.nodes[row.targetIndex];
+    const kind = reportEntityKind(targetNode);
+    const key = `${row.sourceIndex}|${reportRelation(row.edge)}|${kind}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        sourceIndex: row.sourceIndex,
+        depth: row.targetLevel,
+        relation: reportRelation(row.edge),
+        kind,
+        targets: [],
+      });
+    }
+    groups.get(key).targets.push(targetNode);
+  });
+  return [...groups.values()].sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    return reportNodeName(data.nodes[a.sourceIndex]).localeCompare(reportNodeName(data.nodes[b.sourceIndex]));
+  });
+}
+
+function buildRelationshipReport() {
+  if (N === 0 || data._seed_id == null) {
+    throw new Error('Open an entity relationship view before downloading a report.');
+  }
+
+  const seedIndex = idIndex.get(data._seed_id);
+  if (seedIndex == null) {
+    throw new Error('The focused entity is not available in this graph view.');
+  }
+
+  const seedNode = data.nodes[seedIndex];
+  const levels = bfsLevels(seedIndex);
+  const edgeRows = reportEdgesByDepth(levels);
+  const upstreamToFocusRows = edgeRows.filter((row) => row.targetIndex === seedIndex);
+  const narrativeGroups = reportNarrativeGroups(levels);
+  const generated = new Date().toLocaleString();
+  const database = data._database || 'current database';
+  const maxDepth = data._max_depth || Math.max(...levels.filter((level) => level >= 0));
+  const lines = [];
+
+  lines.push('# Relationship Investigation Report');
+  lines.push(`Generated: ${generated}`);
+  lines.push(`Database: ${database}`);
+  lines.push(`Focus entity: ${reportEntityPhrase(seedNode)} (#${seedNode.id})`);
+  lines.push(`Relationship depth: ${maxDepth}`);
+  lines.push(`Scope: ${N.toLocaleString()} entities, ${L.toLocaleString()} relationships`);
+  lines.push('');
+
+  lines.push('## Executive summary');
+  lines.push(`${reportNodeName(seedNode)} is the focus entity for this relationship view. The current graph contains ${N.toLocaleString()} entities and ${L.toLocaleString()} relationships within depth ${maxDepth}.`);
+  if (upstreamToFocusRows.length > 0) {
+    lines.push(`${upstreamToFocusRows.length.toLocaleString()} relationship${upstreamToFocusRows.length === 1 ? ' points' : 's point'} upstream into ${reportNodeName(seedNode)}, where the focus entity is the target node.`);
+  }
+  narrativeGroups.slice(0, 8).forEach((group) => {
+    const sourceNode = data.nodes[group.sourceIndex];
+    const targetNames = group.targets.map(reportNodeName).sort((a, b) => a.localeCompare(b));
+    if (targetNames.length === 1) {
+      lines.push(reportSentence(sourceNode, { type: group.relation }, group.targets[0], true));
+    } else {
+      lines.push(`${reportNodeName(sourceNode)} ${group.relation} the following ${reportPluralKind(group.kind)}: ${reportList(targetNames)}.`);
+    }
+  });
+  if (narrativeGroups.length > 8) {
+    lines.push(`A further ${(narrativeGroups.length - 8).toLocaleString()} relationship groups are listed below.`);
+  }
+  lines.push('');
+
+  if (upstreamToFocusRows.length > 0) {
+    lines.push('## Upstream relationships into focus entity');
+    lines.push(`These relationships point into ${reportNodeName(seedNode)}. In each case, the focus entity is the target node.`);
+    upstreamToFocusRows.forEach((row) => {
+      lines.push(reportEdgeLine(row, seedIndex));
+    });
+    lines.push('');
+  }
+  lines.push('## Relationship narrative');
+  let lastDepth = null;
+  narrativeGroups.forEach((group) => {
+    if (group.depth !== lastDepth) {
+      lines.push('');
+      lines.push(`### Depth ${group.depth}`);
+      lastDepth = group.depth;
+    }
+    const sourceNode = data.nodes[group.sourceIndex];
+    const targetNames = group.targets.map(reportNodeName).sort((a, b) => a.localeCompare(b));
+    if (targetNames.length === 1) {
+      lines.push(`- ${reportSentence(sourceNode, { type: group.relation }, group.targets[0], true)}`);
+    } else {
+      lines.push(`- ${reportNodeName(sourceNode)} ${group.relation} the following ${reportPluralKind(group.kind)}: ${reportList(targetNames)}.`);
+    }
+  });
+  if (narrativeGroups.length === 0) {
+    lines.push('- No outward depth-by-depth relationship path was found in this view.');
+  }
+  lines.push('');
+
+  lines.push('## Relationship detail');
+  edgeRows.forEach((row) => {
+    lines.push(reportEdgeLine(row, seedIndex));
+  });
+
+  lines.push('');
+  lines.push('## Graph visualisation');
+  lines.push('');
+  lines.push(buildSubgraphSvg());
+
+  return lines.join('\n');
+}
+
+function downloadRelationshipReport() {
+  try {
+    const report = buildRelationshipReport();
+    const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `relationship-report-${data._seed_id}-depth-${data._max_depth || 'x'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    bfsErr.textContent = '';
+  } catch (err) {
+    bfsErr.textContent = err.message || 'Could not export this relationship report.';
+  }
+}
 
 const BREADCRUMB_KEY = 'teraGraphExplorerBreadcrumbs';
 const NEXT_CRUMB_KEY = 'teraGraphExplorerNextCrumbLabel';
@@ -2316,6 +2531,8 @@ function queueNextCrumb(label) {
 
   const svgExportButton = document.getElementById('btn-svg-export');
   if (svgExportButton) svgExportButton.disabled = seedId == null;
+  const reportExportButton = document.getElementById('btn-report-export');
+  if (reportExportButton) reportExportButton.disabled = seedId == null;
 
   if (isEmpty) {
     bfsStatusMode.textContent = 'no data';
@@ -2492,6 +2709,8 @@ document.getElementById('btn-bfs-run').onclick = async () => {
 
 document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true, label: 'Full graph' });
 document.getElementById('btn-svg-export').onclick = downloadSubgraphSvg;
+const reportButton = document.getElementById('btn-report-export');
+if (reportButton) reportButton.onclick = downloadRelationshipReport;
 
 // Submit on Enter in the legacy seed input, if a template still provides one.
 if (bfsSeedInput !== searchInput) {
