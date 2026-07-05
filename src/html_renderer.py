@@ -49,7 +49,7 @@ __BRAND_STYLE__
 <div id="empty-state" class="panel" style="display: none;">
   <div class="empty-icon">→</div>
   <h2>Awaiting input</h2>
-  <p>Select a depth in the panel on the right, then double-click a node to drill down or right-click to drill with a filter.</p>
+  <p>Find an entity on the right, then explore its relationship network.</p>
   <p>Or click <strong>Full graph</strong> to load every node and edge in <code>__DATABASE__</code> (slow at 100k+).</p>
 </div>
 
@@ -107,50 +107,42 @@ __BRAND_STYLE__
 <aside id="controls">
 
   <section>
-    <h2>Subgraph (BFS)</h2>
+    <h2>Find Entity</h2>
     <div id="bfs-status">
       <span id="bfs-mode">full graph</span>
       <span id="bfs-stats"></span>
     </div>
     <div id="bfs-breadcrumb"></div>
-    <div class="row-h" style="margin-top: 10px;">
-      <label for="bfs-seed">Seed</label>
-      <input id="bfs-seed" type="text" placeholder="Node label or #id"
-             autocomplete="off" style="flex: 1; min-width: 0; background: var(--td-navy);
-             color: var(--text); border: 1px solid var(--border); border-radius: 5px;
-             padding: 5px 8px; font-size: 12px; font-family: inherit;">
+    <div class="field entity-find-field">
+      <div class="field-head"><label for="search-input">Entity</label></div>
+      <input id="search-input" type="text" placeholder="Customer, account, transaction, merchant..." autocomplete="off">
     </div>
     <div class="field">
-      <div class="field-head"><label for="bfs-depth">Max depth</label>
+      <div class="field-head"><label for="bfs-depth">Relationship depth</label>
                               <span class="val" id="v-bfs-depth">2</span></div>
       <input id="bfs-depth" type="range" min="1" max="6" step="1" value="2">
     </div>
     <div class="btn-row">
-      <button id="btn-bfs-run" class="primary">Open seed</button>
+      <button id="btn-bfs-run" class="primary">Explore</button>
       <button id="btn-bfs-reset">Full graph</button>
     </div>
-    <div class="btn-row">
-      <button id="btn-svg-export">Download SVG</button>
-    </div>
-    <div id="bfs-error"></div>
-  </section>
-
-  <section>
-    <h2>Search</h2>
-    <input id="search-input" type="text" placeholder="Search by label…" autocomplete="off">
-    <div class="search-range" aria-label="Search by node importance range">
+    <div class="search-range" aria-label="Find by entity importance range">
       <label>Importance</label>
       <input id="search-importance-min" type="number" min="0" max="1" step="0.05" placeholder="min">
       <span>to</span>
       <input id="search-importance-max" type="number" min="0" max="1" step="0.05" placeholder="max">
     </div>
-    <div class="search-filters" aria-label="Search by node attributes">
+    <div class="search-filters" aria-label="Find by entity attributes">
       <select id="search-community" aria-label="Community filter"><option value="">Any community</option></select>
       <select id="search-category" aria-label="Category filter"><option value="">Any category</option></select>
       <select id="search-role" aria-label="Role filter"><option value="">Any role</option></select>
     </div>
     <div id="search-results"></div>
     <div id="search-status"></div>
+    <div class="btn-row">
+      <button id="btn-svg-export">Download SVG</button>
+    </div>
+    <div id="bfs-error"></div>
   </section>
 
   <section>
@@ -174,7 +166,7 @@ __BRAND_STYLE__
       <label for="sel-layout">Layout</label>
       <select id="sel-layout">
         <option value="community">Community clusters</option>
-        <option value="bfs">BFS rings</option>
+        <option value="bfs">Relationship rings</option>
         <option value="category">Category columns</option>
         <option value="role">Role lanes</option>
         <option value="grid">Packed grid</option>

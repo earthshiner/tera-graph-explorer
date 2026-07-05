@@ -141,7 +141,7 @@ const state = {
   nodes:   { colorBy: 'community', sizeScale: 0.3, opacity: 1.0 },
   edges:   { curved: true, arrows: false, widthScale: 1.0, opacity: 1.0 },
   layout:  { mode: 'community' },
-  search:  { query: '', matches: new Set() },
+  search:  { query: '', matches: new Set(), remote: [] },
   focused:     null,                            // selected point index, or null
   pinnedLabel: null,                            // node index whose label is always visible
   hovered:     null,                            // hovered point index (transient)
@@ -1625,11 +1625,103 @@ function clearSearch() {
   runSearch('');
 }
 
+let searchRequestSeq = 0;
+let searchTimerId = null;
+
+function cancelServerSearch() {
+  searchRequestSeq += 1;
+  if (searchTimerId != null) {
+    clearTimeout(searchTimerId);
+    searchTimerId = null;
+  }
+}
+
+function serverSearchPayload(rawQuery, range) {
+  const payload = { query: rawQuery.trim(), limit: 8 };
+  if (range.min != null) payload.importance_min = range.min;
+  if (range.max != null) payload.importance_max = range.max;
+  return payload;
+}
+
+async function fetchServerSearch(payload, requestId, suffix) {
+  let resp;
+  try {
+    resp = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {
+    if (requestId === searchRequestSeq) {
+      searchStatus.textContent = `Cannot reach ${window.location.host}. Is the Python server still running?`;
+    }
+    return;
+  }
+
+  if (requestId !== searchRequestSeq) return;
+  if (!resp.ok) {
+    searchStatus.textContent = `Find failed: ${resp.statusText}`;
+    return;
+  }
+
+  const body = await resp.json();
+  if (requestId !== searchRequestSeq) return;
+  renderServerSearchResults(body.nodes || [], suffix);
+}
+
+function queueServerSearch(rawQuery, range, suffix) {
+  cancelServerSearch();
+  if (window.location.protocol === 'file:') {
+    searchStatus.textContent = 'Server search needs the running Python server.';
+    return;
+  }
+
+  const payload = serverSearchPayload(rawQuery, range);
+  const requestId = searchRequestSeq;
+  searchStatus.textContent = 'Finding entities...';
+  searchTimerId = setTimeout(() => {
+    searchTimerId = null;
+    fetchServerSearch(payload, requestId, suffix);
+  }, 220);
+}
+
+function openServerSearchNode(node) {
+  if (!node) return;
+  const depth = getBfsDepth();
+  const label = node.label || `#${node.id}`;
+  bfsSeedInput.value = `#${node.id} ${label}`;
+  searchStatus.textContent = `Opening ${label} at depth ${depth}...`;
+  navigateTo(node.id, depth, { label: label + ' depth ' + depth });
+}
+
+function renderServerSearchResults(nodes, suffix) {
+  state.search.remote = nodes;
+  searchResults.innerHTML = '';
+  nodes.forEach((n) => {
+    const item = document.createElement('div');
+    item.className = 'item';
+    item.innerHTML = `<span class="label">${n.label}</span>` +
+                     `<span class="meta">${n.category} · ${n.community} · ${formatImportance(n.importance)}</span>`;
+    item.onclick = () => openServerSearchNode(n);
+    searchResults.appendChild(item);
+  });
+
+  if (nodes.length === 0) {
+    searchStatus.textContent = `No database matches${suffix}`;
+  } else if (nodes.length < 8) {
+    searchStatus.textContent = `${nodes.length} database match${nodes.length === 1 ? '' : 'es'}${suffix}`;
+  } else {
+    searchStatus.textContent = `Showing 8 database matches${suffix}`;
+  }
+}
+
 function runSearch(query) {
   const q = (query || '').trim().toLowerCase();
   const range = currentImportanceRange();
   const attributeFilters = currentAttributeFilters();
   state.search.query = q;
+  state.search.remote = [];
+  cancelServerSearch();
   searchResults.innerHTML = '';
 
   if (!q && !range.active && attributeFilters.length === 0) {
@@ -1672,7 +1764,11 @@ function runSearch(query) {
   const filterText = [rangeText, ...attributeText].filter(Boolean).join(' · ');
   const suffix = filterText ? ` · ${filterText}` : '';
   if (matches.length === 0) {
-    searchStatus.textContent = `No matches${suffix}`;
+    if (q && attributeFilters.length === 0) {
+      queueServerSearch(query || '', range, suffix);
+    } else {
+      searchStatus.textContent = `No matches${suffix}`;
+    }
   } else if (matches.length <= 8) {
     searchStatus.textContent = `${matches.length} match${matches.length === 1 ? '' : 'es'}${suffix}`;
   } else {
@@ -1685,7 +1781,48 @@ function runSearch(query) {
 
 function focusFirstSearchMatch() {
   const first = [...state.search.matches][0];
-  if (first != null) focusOnNode(first);
+  if (first != null) {
+    focusOnNode(first);
+    return;
+  }
+  if (state.search.remote.length > 0) {
+    openServerSearchNode(state.search.remote[0]);
+    return;
+  }
+  openSearchQueryAsSeed();
+}
+
+async function openSearchQueryAsSeed() {
+  const raw = searchInput.value.trim();
+  if (!raw) return;
+
+  const range = currentImportanceRange();
+  const attributeFilters = currentAttributeFilters();
+  if (range.active || attributeFilters.length > 0) {
+    searchStatus.textContent = 'No visible matches. Clear filters or choose a database result.';
+    return;
+  }
+
+  if (window.location.protocol === 'file:') {
+    searchStatus.textContent = 'Label lookup needs the running server.';
+    return;
+  }
+
+  const depth = getBfsDepth();
+  bfsSeedInput.value = raw;
+  searchStatus.textContent = `Opening ${raw} at depth ${depth}...`;
+  showGraphLoading('Resolving entity...');
+  try {
+    const result = await bfsResolveSeed({ seed_label: raw, max_depth: depth });
+    if (result.seed_id == null) {
+      searchStatus.textContent = 'No entity matched that label.';
+      hideGraphLoading();
+      return;
+    }
+    navigateTo(result.seed_id, depth, { label: raw + ' depth ' + depth });
+  } catch (_) {
+    hideGraphLoading();
+  }
 }
 
 searchInput.addEventListener('input', (ev) => runSearch(ev.target.value));
@@ -1694,6 +1831,7 @@ searchInput.addEventListener('keydown', (ev) => {
     clearSearch();
     setFocused(null);
   } else if (ev.key === 'Enter') {
+    ev.preventDefault();
     focusFirstSearchMatch();
   }
 });
@@ -1704,6 +1842,7 @@ searchInput.addEventListener('keydown', (ev) => {
       clearSearch();
       setFocused(null);
     } else if (ev.key === 'Enter') {
+      ev.preventDefault();
       focusFirstSearchMatch();
     }
   });
@@ -1715,6 +1854,7 @@ searchAttributeSelects.forEach(({ el }) => {
       clearSearch();
       setFocused(null);
     } else if (ev.key === 'Enter') {
+      ev.preventDefault();
       focusFirstSearchMatch();
     }
   });
@@ -1729,7 +1869,7 @@ const seedIndex = data._seed_id == null ? null : idIndex.get(data._seed_id);
 const seedHaloEl = seedIndex == null ? null : document.createElement('div');
 if (seedHaloEl) {
   seedHaloEl.className = 'seed-halo';
-  seedHaloEl.title = 'Drill-down seed node';
+  seedHaloEl.title = 'Explored entity';
   labelLayer.appendChild(seedHaloEl);
 }
 
@@ -1855,10 +1995,10 @@ setEdgeLabelsVisible(state.labels.edges);
 if (seedHaloEl || state.pinnedLabel != null) startLabelLoop();
 
 // ============================================================ //
-//                       BFS RUNTIME RELOAD                     //
+//                    ENTITY EXPLORATION RELOAD                 //
 // ============================================================ //
 //
-// Wires the "Subgraph (BFS)" section. When launched via
+// Wires the "Find Entity" section. When launched via
 //   python teradata_cosmos_graph.py serve
 // the embedded HTTP server resolves seed labels and re-fetches
 // subgraphs on demand. The page reloads with new query-string
@@ -1866,7 +2006,7 @@ if (seedHaloEl || state.pinnedLabel != null) startLabelLoop();
 // When opened directly as a static file, the buttons fall through
 // with a friendly error.
 
-const bfsSeedInput  = document.getElementById('bfs-seed');
+const bfsSeedInput  = document.getElementById('bfs-seed') || searchInput;
 const bfsDepthInput = document.getElementById('bfs-depth');
 const bfsDepthVal   = document.getElementById('v-bfs-depth');
 const bfsStatusMode = document.getElementById('bfs-mode');
@@ -2170,7 +2310,7 @@ function queueNextCrumb(label) {
 
   if (isEmpty) {
     bfsStatusMode.textContent = 'no data';
-    bfsStatusStat.textContent = 'enter a seed node →';
+    bfsStatusStat.textContent = 'find an entity →';
     document.getElementById('empty-state').style.display = 'block';
     document.getElementById('legend').style.display = 'none';
     document.getElementById('stats').textContent = '0 nodes · 0 edges';
@@ -2180,7 +2320,7 @@ function queueNextCrumb(label) {
   }
 
   if (seedId != null) {
-    bfsStatusMode.textContent = `bfs (depth ${data._max_depth})`;
+    bfsStatusMode.textContent = `relationships (depth ${data._max_depth})`;
     if (totalN != null && totalL != null) {
       bfsStatusStat.textContent =
         `${N.toLocaleString()} / ${totalN.toLocaleString()} nodes · ` +
@@ -2317,7 +2457,11 @@ function drillIntoNode(index, filterKey, filterValue, edgeFilterKey, edgeFilterV
 document.getElementById('btn-bfs-run').onclick = async () => {
   const raw = bfsSeedInput.value.trim();
   if (!raw) {
-    bfsErr.textContent = 'Enter a node label or #id';
+    bfsErr.textContent = 'Enter an entity label or #id';
+    return;
+  }
+  if (state.search.remote.length > 0) {
+    openServerSearchNode(state.search.remote[0]);
     return;
   }
   const depth = getBfsDepth();
@@ -2325,11 +2469,11 @@ document.getElementById('btn-bfs-run').onclick = async () => {
   const payload = seedIdMatch
     ? { seed_id: parseInt(seedIdMatch[1], 10), max_depth: depth }
     : { seed_label: raw, max_depth: depth };
-  showGraphLoading('Resolving seed...');
+  showGraphLoading('Resolving entity...');
   try {
     const result = await bfsResolveSeed(payload);
     if (result.seed_id == null) {
-      bfsErr.textContent = 'No node matched that label.';
+      bfsErr.textContent = 'No entity matched that label.';
       hideGraphLoading();
       return;
     }
@@ -2340,7 +2484,9 @@ document.getElementById('btn-bfs-run').onclick = async () => {
 document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true, label: 'Full graph' });
 document.getElementById('btn-svg-export').onclick = downloadSubgraphSvg;
 
-// Submit on Enter in the seed input
-bfsSeedInput.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') document.getElementById('btn-bfs-run').click();
-});
+// Submit on Enter in the legacy seed input, if a template still provides one.
+if (bfsSeedInput !== searchInput) {
+  bfsSeedInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') document.getElementById('btn-bfs-run').click();
+  });
+}

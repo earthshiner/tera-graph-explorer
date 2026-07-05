@@ -254,6 +254,42 @@ def resolve_seed_label(conn, database: str, label: str) -> "int | None":
         return int(row[0]) if row else None
 
 
+def search_nodes(conn, database: str, query: str, limit: int = 8,
+                 importance_min=None, importance_max=None) -> list:
+    """Return lightweight node matches for startup search without full graph load."""
+    node_table = qualify_table(database, "graph_nodes")
+    term = " ".join(str(query or "").split()).lower()
+    if not term:
+        return []
+
+    try:
+        max_rows = int(limit)
+    except (TypeError, ValueError):
+        max_rows = 8
+    max_rows = max(1, min(25, max_rows))
+
+    predicates = ["LOWER(node_label) LIKE ?"]
+    params = [f"%{term}%"]
+    if importance_min is not None:
+        predicates.append("importance >= ?")
+        params.append(float(importance_min))
+    if importance_max is not None:
+        predicates.append("importance <= ?")
+        params.append(float(importance_max))
+
+    set_query_band(conn, action="search_nodes", graph_db=database)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT node_id, node_label, category, community, importance, node_role "
+            f"FROM {node_table} "
+            f"WHERE {' AND '.join(predicates)} "
+            "QUALIFY ROW_NUMBER() OVER ("
+            "ORDER BY CASE WHEN LOWER(node_label) = ? THEN 0 ELSE 1 END, "
+            "importance DESC, node_label, node_id) <= ?",
+            (*params, term, max_rows),
+        )
+        return _read_nodes(cur)
+
 def _read_nodes(cur) -> list:
     return [
         {
