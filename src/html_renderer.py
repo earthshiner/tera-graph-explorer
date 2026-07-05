@@ -141,6 +141,7 @@ __BRAND_STYLE__
     <div id="search-status"></div>
     <div class="btn-row">
       <button id="btn-svg-export">Download SVG</button>
+      <button id="btn-report-export">Download Report</button>
     </div>
     <div id="bfs-error"></div>
   </section>
