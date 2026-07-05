@@ -69,6 +69,7 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     and POST /api/bfs resolves a seed label to a node_id."""
     import http.server
     import socketserver
+    import threading
     import urllib.parse
 
     print(f"→ Connecting to {host} as {user} ({logmech}); database={database}…")
@@ -78,6 +79,7 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     # Cache rendered HTML for recently used (seed_id, max_depth) pairs so
     # back-button navigation between subgraphs doesn't re-query.
     cache: dict = {}
+    query_lock = threading.Lock()
     CACHE_LIMIT = 4
 
     def html_for(seed_id, max_depth: int, full: bool = False,
@@ -89,33 +91,34 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
         #   3) full:  full=True            -> entire graph
         key = (seed_id, max_depth, full, filter_key, filter_value,
                edge_filter_key, edge_filter_value)
-        if key in cache:
-            return cache[key]
-        if seed_id is not None:
-            print(
-                f"  BFS from node_id={seed_id}, max_depth={max_depth}, "
-                f"node_filter={filter_key}:{filter_value}, "
-                f"edge_filter={edge_filter_key}:{edge_filter_value}…"
-            )
-            data = fetch_bfs_subgraph(
-                conn, database, seed_id, max_depth,
-                filter_key, filter_value, edge_filter_key, edge_filter_value
-            )
-            print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
-        elif full:
-            print(f"  fetching full graph…")
-            data = fetch_full_graph(conn, database)
-            print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
-        else:
-            # Empty landing page — no query, no data, just the controls panel.
-            print("  empty landing page (awaiting user input)")
-            data = {"nodes": [], "links": [], "_empty": True, "_database": database}
+        with query_lock:
+            if key in cache:
+                return cache[key]
+            if seed_id is not None:
+                print(
+                    f"  BFS from node_id={seed_id}, max_depth={max_depth}, "
+                    f"node_filter={filter_key}:{filter_value}, "
+                    f"edge_filter={edge_filter_key}:{edge_filter_value}…"
+                )
+                data = fetch_bfs_subgraph(
+                    conn, database, seed_id, max_depth,
+                    filter_key, filter_value, edge_filter_key, edge_filter_value
+                )
+                print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
+            elif full:
+                print(f"  fetching full graph…")
+                data = fetch_full_graph(conn, database)
+                print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
+            else:
+                # Empty landing page — no query, no data, just the controls panel.
+                print("  empty landing page (awaiting user input)")
+                data = {"nodes": [], "links": [], "_empty": True, "_database": database}
 
-        html = render_html_str(data, brand)
-        if len(cache) >= CACHE_LIMIT:
-            cache.pop(next(iter(cache)))
-        cache[key] = html
-        return html
+            html = render_html_str(data, brand)
+            if len(cache) >= CACHE_LIMIT:
+                cache.pop(next(iter(cache)))
+            cache[key] = html
+            return html
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -180,7 +183,8 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 if "seed_id" in payload:
                     seed_id = int(payload["seed_id"])
                 elif "seed_label" in payload:
-                    seed_id = resolve_seed_label(conn, database, payload["seed_label"])
+                    with query_lock:
+                        seed_id = resolve_seed_label(conn, database, payload["seed_label"])
                 else:
                     self.send_json_error(400, "Need seed_id or seed_label")
                     return
@@ -197,8 +201,12 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                     "BFS lookup failed. Check the seed label and database query syntax.",
                 )
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", port), Handler) as httpd:
+    class GraphHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+        block_on_close = False
+
+    with GraphHTTPServer(("", port), Handler) as httpd:
         url = f"http://localhost:{port}/"
         print(f"→ Visualisation at {url}")
         if initial_seed_id is not None:
@@ -206,9 +214,14 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                   f"depth={initial_max_depth or 2}")
         webbrowser.open(url)
         try:
-            httpd.serve_forever()
+            httpd.serve_forever(poll_interval=0.1)
         except KeyboardInterrupt:
-            print("\nShutting down…")
+            print("\nShutting down...")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def main() -> None:

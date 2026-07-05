@@ -126,6 +126,8 @@ const hexToRgb = (h) => [
   parseInt(h.slice(5, 7), 16) / 255,
 ];
 const ORANGE_RGB = hexToRgb(BRAND_ACCENT);
+const UPSTREAM_HEX = '#7ED321';
+const UPSTREAM_RGB = hexToRgb(UPSTREAM_HEX);
 
 function browserEventFromArgs(positionOrEvent, maybeEvent) {
   return maybeEvent || positionOrEvent || null;
@@ -141,6 +143,7 @@ const state = {
   layout:  { mode: 'community' },
   search:  { query: '', matches: new Set() },
   focused:     null,                            // selected point index, or null
+  pinnedLabel: null,                            // node index whose label is always visible
   hovered:     null,                            // hovered point index (transient)
   focusedEdge: null,                            // selected edge (link) index, or null
   hoveredEdge: null,                            // hovered edge index (transient)
@@ -245,6 +248,27 @@ function bfsLevels(seedIndex) {
     });
   }
   return levels;
+}
+
+function edgeDirectionLevels() {
+  const anchor = data._seed_id != null ? idIndex.get(data._seed_id) : highlightKey();
+  if (anchor == null || anchor === undefined || anchor < 0) return null;
+  return bfsLevels(anchor);
+}
+
+function edgeIsUpstream(edgeIndex, levels) {
+  if (!levels) return false;
+  const e = data.links[edgeIndex];
+  const s = idIndex.get(e.source);
+  const t = idIndex.get(e.target);
+  if (s == null || t == null) return false;
+  const sourceLevel = levels[s];
+  const targetLevel = levels[t];
+  return sourceLevel >= 0 && targetLevel >= 0 && sourceLevel > targetLevel;
+}
+
+function edgeAccentRgb(edgeIndex, levels) {
+  return edgeIsUpstream(edgeIndex, levels) ? UPSTREAM_RGB : ORANGE_RGB;
 }
 
 function placeBfsRings() {
@@ -409,15 +433,21 @@ function rebuildLinkColors() {
   const ek = edgeHighlightKey();
   const hi = highlightKey();
   const incident = (ek == null && hi != null) ? incidentOf.get(hi) : null;
+  const directionLevels = edgeDirectionLevels();
 
   data.links.forEach((e, i) => {
     let r = 1.0, g = 1.0, b = 1.0;                              // default white
     let alpha = 0.20 + (e.weight || 0.5) * 0.50;                // weight-derived
+    if (edgeIsUpstream(i, directionLevels)) {
+      r = UPSTREAM_RGB[0]; g = UPSTREAM_RGB[1]; b = UPSTREAM_RGB[2];
+      alpha = Math.max(alpha, 0.72);
+    }
 
     if (ek != null) {
-      // Edge focus: only the focal edge stays orange, all others nearly black
+      // Edge focus: only the focal edge stays directional/accented, all others nearly black
       if (i === ek) {
-        r = ORANGE_RGB[0]; g = ORANGE_RGB[1]; b = ORANGE_RGB[2];
+        const accentRgb = edgeAccentRgb(i, directionLevels);
+        r = accentRgb[0]; g = accentRgb[1]; b = accentRgb[2];
         alpha = 1.0;
       } else {
         r = g = b = 0.30;
@@ -425,11 +455,12 @@ function rebuildLinkColors() {
       }
     } else if (incident) {
       if (incident.has(i)) {
-        // Incident edge → highlight in Teradata Orange, full alpha
-        r = ORANGE_RGB[0]; g = ORANGE_RGB[1]; b = ORANGE_RGB[2];
+        // Incident edge -> upstream green or downstream accent, full alpha
+        const accentRgb = edgeAccentRgb(i, directionLevels);
+        r = accentRgb[0]; g = accentRgb[1]; b = accentRgb[2];
         alpha = 1.0;
       } else {
-        // Non-incident → flat dark grey, very dim
+        // Non-incident -> flat dark grey, very dim
         r = g = b = 0.30;
         alpha = 0.05;
       }
@@ -479,10 +510,11 @@ function applySimulationParams() {
   if (!paused) graph.start(0.3);
 }
 function applyRenderParams() {
+  const nativeArrows = isCanvasRenderer && state.edges.arrows;
   graph.setConfig({
     curvedLinks: state.edges.curved,
-    linkArrows:  state.edges.arrows,
-    renderLinkArrows: state.edges.arrows,
+    linkArrows: nativeArrows,
+    renderLinkArrows: nativeArrows,
   });
   syncArrowOverlay();
 }
@@ -861,8 +893,8 @@ const initialConfig = {
   scalePointsOnZoom: true,
   renderLinks: true,
   curvedLinks: state.edges.curved,
-  linkArrows: state.edges.arrows,
-  renderLinkArrows: state.edges.arrows,
+  linkArrows: false,
+  renderLinkArrows: false,
 
   fitViewOnInit: true,
   fitViewDelay: 500,
@@ -1054,6 +1086,7 @@ function drawArrowOverlay() {
   if (!positions || positions.length < N * 2) return;
 
   const radiusCache = new Map();
+  const directionLevels = edgeDirectionLevels();
   const maxArrows = Math.min(L, 60000);
   for (let i = 0; i < maxArrows; i++) {
     const s = linksArr[i * 2], t = linksArr[i * 2 + 1];
@@ -1065,23 +1098,60 @@ function drawArrowOverlay() {
     const dy = target[1] - source[1];
     const len = Math.hypot(dx, dy);
     if (len < 8) continue;
-    const ux = dx / len;
-    const uy = dy / len;
+
+    let control = null;
+    let sourceTangentX = dx;
+    let sourceTangentY = dy;
+    let targetTangentX = dx;
+    let targetTangentY = dy;
+    if (state.edges.curved) {
+      const bend = 0.16;
+      control = {
+        x: (source[0] + target[0]) / 2 - dy * bend,
+        y: (source[1] + target[1]) / 2 + dx * bend,
+      };
+      sourceTangentX = control.x - source[0];
+      sourceTangentY = control.y - source[1];
+      targetTangentX = target[0] - control.x;
+      targetTangentY = target[1] - control.y;
+    }
+
+    const sourceTangentLen = Math.hypot(sourceTangentX, sourceTangentY);
+    const targetTangentLen = Math.hypot(targetTangentX, targetTangentY);
+    if (sourceTangentLen < 1 || targetTangentLen < 1) continue;
+    const sux = sourceTangentX / sourceTangentLen;
+    const suy = sourceTangentY / sourceTangentLen;
+    const tux = targetTangentX / targetTangentLen;
+    const tuy = targetTangentY / targetTangentLen;
+    const sourceRadius = webglNodeScreenRadius(s, positions, radiusCache);
     const targetRadius = webglNodeScreenRadius(t, positions, radiusCache);
+    const startX = source[0] + sux * (sourceRadius + 1);
+    const startY = source[1] + suy * (sourceRadius + 1);
+    const tipX = target[0] - tux * (targetRadius + 1);
+    const tipY = target[1] - tuy * (targetRadius + 1);
+    const stroke = edgeIsUpstream(i, directionLevels) ? UPSTREAM_HEX : linkRgba(i);
+
+    arrowCtx.beginPath();
+    arrowCtx.moveTo(startX, startY);
+    if (control) arrowCtx.quadraticCurveTo(control.x, control.y, tipX, tipY);
+    else arrowCtx.lineTo(tipX, tipY);
+    arrowCtx.strokeStyle = stroke;
+    arrowCtx.lineWidth = Math.max(0.8, Math.min(5, (linkWidths[i] || 1) * (state.edges.widthScale || 1)));
+    arrowCtx.lineCap = 'round';
+    arrowCtx.stroke();
+
     const arrowLen = Math.max(8, Math.min(14, 7 + (linkWidths[i] || 1) * 1.2));
-    const tipX = target[0] - ux * (targetRadius + 1);
-    const tipY = target[1] - uy * (targetRadius + 1);
     const half = arrowLen * 0.48;
-    const baseX = tipX - ux * arrowLen;
-    const baseY = tipY - uy * arrowLen;
-    const px = -uy * half;
-    const py = ux * half;
+    const baseX = tipX - tux * arrowLen;
+    const baseY = tipY - tuy * arrowLen;
+    const px = -tuy * half;
+    const py = tux * half;
     arrowCtx.beginPath();
     arrowCtx.moveTo(tipX, tipY);
     arrowCtx.lineTo(baseX + px, baseY + py);
     arrowCtx.lineTo(baseX - px, baseY - py);
     arrowCtx.closePath();
-    arrowCtx.fillStyle = linkRgba(i);
+    arrowCtx.fillStyle = stroke;
     arrowCtx.fill();
   }
 }
@@ -1218,6 +1288,7 @@ if (isCanvasRenderer) {
 
 function setFocused(i) {
   state.focused = (i == null) ? null : i;
+  state.pinnedLabel = state.focused ?? seedIndex ?? null;
   safeSetFocusedPoint(state.focused);
   if (state.focused != null) setBfsSeedFromNode(state.focused);
   rebuildPointColors();
@@ -1550,6 +1621,7 @@ function clearSearch() {
   searchImportanceMin.value = '';
   searchImportanceMax.value = '';
   searchAttributeSelects.forEach(({ el }) => { el.value = ''; });
+  state.pinnedLabel = seedIndex ?? null;
   runSearch('');
 }
 
@@ -1562,6 +1634,7 @@ function runSearch(query) {
 
   if (!q && !range.active && attributeFilters.length === 0) {
     state.search.matches = new Set();
+    state.pinnedLabel = seedIndex ?? state.focused ?? null;
     searchStatus.textContent = '';
     rebuildPointColors();
     return;
@@ -1692,6 +1765,7 @@ function projectAndUpdateLabels() {
 
   const showN = state.labels.nodes;
   const showE = state.labels.edges;
+  const pinnedLabel = state.pinnedLabel;
 
   if (seedHaloEl && seedIndex != null) {
     try {
@@ -1706,17 +1780,20 @@ function projectAndUpdateLabels() {
     } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
   }
 
-  if (showN) {
-    for (let i = 0; i < N; i++) {
-      let sp;
-      try {
-        sp = graph.spaceToScreenPosition([positions[i * 2], positions[i * 2 + 1]]);
-      } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
-      if (!sp) continue;
-      // place above the point (translate -50% horizontal, plus a fixed offset upward)
-      nodeLabelEls[i].style.transform =
-        `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, calc(-100% - 10px))`;
-    }
+  for (let i = 0; i < N; i++) {
+    const showThisLabel = showN || i === pinnedLabel;
+    nodeLabelEls[i].style.display = showThisLabel ? 'block' : 'none';
+    if (!showThisLabel) continue;
+    let sp;
+    try {
+      sp = graph.spaceToScreenPosition([positions[i * 2], positions[i * 2 + 1]]);
+    } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
+    if (!sp) continue;
+    const isPinnedSeed = i === pinnedLabel && i === seedIndex;
+    const labelOffset = isPinnedSeed
+      ? 'translate(calc(-100% - 12px), calc(-100% - 12px))'
+      : 'translate(-50%, calc(-100% - 10px))';
+    nodeLabelEls[i].style.transform = `translate(${sp[0]}px, ${sp[1]}px) ${labelOffset}`;
   }
   if (showE) {
     for (let i = 0; i < L; i++) {
@@ -1751,14 +1828,16 @@ function stopLabelLoop() {
 
 function setNodeLabelsVisible(show) {
   state.labels.nodes = show;
-  nodeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
-  if (seedHaloEl || state.labels.nodes || state.labels.edges) startLabelLoop();
+  nodeLabelEls.forEach((el, i) => {
+    el.style.display = (show || i === state.pinnedLabel) ? 'block' : 'none';
+  });
+  if (seedHaloEl || state.pinnedLabel != null || state.labels.nodes || state.labels.edges) startLabelLoop();
   else stopLabelLoop();
 }
 function setEdgeLabelsVisible(show) {
   state.labels.edges = show;
   edgeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
-  if (seedHaloEl || state.labels.nodes || state.labels.edges) startLabelLoop();
+  if (seedHaloEl || state.pinnedLabel != null || state.labels.nodes || state.labels.edges) startLabelLoop();
   else stopLabelLoop();
 }
 
@@ -1770,9 +1849,10 @@ document.getElementById('chk-edgeLabels').addEventListener('change', (ev) => {
   setEdgeLabelsVisible(ev.target.checked);
   saveUiSettings();
 });
+state.pinnedLabel = seedIndex ?? null;
 setNodeLabelsVisible(state.labels.nodes);
 setEdgeLabelsVisible(state.labels.edges);
-if (seedHaloEl) startLabelLoop();
+if (seedHaloEl || state.pinnedLabel != null) startLabelLoop();
 
 // ============================================================ //
 //                       BFS RUNTIME RELOAD                     //
@@ -1810,6 +1890,191 @@ function setBfsSeedFromNode(index) {
 bfsDepthInput.addEventListener('input', () => {
   bfsDepthVal.textContent = getBfsDepth();
 });
+
+
+function svgEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function svgAttr(value) {
+  return svgEscape(value);
+}
+
+function splitSvgLabel(label, maxChars = 26) {
+  const words = String(label || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let current = '';
+  words.forEach((word) => {
+    if (!current) current = word;
+    else if ((current + ' ' + word).length <= maxChars) current += ' ' + word;
+    else {
+      lines.push(current);
+      current = word;
+    }
+  });
+  if (current) lines.push(current);
+  return lines.length ? lines.slice(0, 2) : ['Unnamed node'];
+}
+
+function rectBoundaryPoint(source, target, inset = 4) {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  if (dx === 0 && dy === 0) return { x: source.x, y: source.y };
+  const halfW = Math.max(1, source.w / 2 - inset);
+  const halfH = Math.max(1, source.h / 2 - inset);
+  const tx = Math.abs(dx) / halfW;
+  const ty = Math.abs(dy) / halfH;
+  const scale = 1 / Math.max(tx, ty);
+  return { x: source.x + dx * scale, y: source.y + dy * scale };
+}
+
+function nodeExportLayout() {
+  const exportSeedIndex = data._seed_id == null ? 0 : idIndex.get(data._seed_id);
+  const levels = bfsLevels(exportSeedIndex ?? 0);
+  const buckets = new Map();
+  for (let i = 0; i < N; i++) {
+    const level = levels[i] < 0 ? 999 : levels[i];
+    if (!buckets.has(level)) buckets.set(level, []);
+    buckets.get(level).push(i);
+  }
+  const orderedLevels = [...buckets.keys()].sort((a, b) => a - b);
+  const marginX = 72;
+  const marginTop = 118;
+  const columnGap = 285;
+  const rowGap = 92;
+  const nodesByIndex = new Map();
+  let maxRows = 1;
+
+  orderedLevels.forEach((level, levelPos) => {
+    const indexes = buckets.get(level).sort((a, b) => {
+      if (a === exportSeedIndex) return -1;
+      if (b === exportSeedIndex) return 1;
+      return String(data.nodes[a].label || '').localeCompare(String(data.nodes[b].label || ''));
+    });
+    maxRows = Math.max(maxRows, indexes.length);
+    indexes.forEach((nodeIndex, row) => {
+      const n = data.nodes[nodeIndex];
+      const labelChars = Math.max(14, String(n.label || '').length);
+      const w = Math.max(176, Math.min(280, labelChars * 7 + 48));
+      const h = 66;
+      const x = marginX + levelPos * columnGap;
+      const y = marginTop + row * rowGap;
+      nodesByIndex.set(nodeIndex, { index: nodeIndex, level, x, y, w, h });
+    });
+  });
+
+  return {
+    seedIndex: exportSeedIndex,
+    levels: orderedLevels,
+    nodesByIndex,
+    width: Math.max(840, marginX * 2 + Math.max(1, orderedLevels.length - 1) * columnGap + 300),
+    height: Math.max(520, marginTop + maxRows * rowGap + 88),
+  };
+}
+
+function buildSubgraphSvg() {
+  if (N === 0 || data._seed_id == null) {
+    throw new Error('Open a seed subgraph before downloading SVG.');
+  }
+
+  const layout = nodeExportLayout();
+  const { cmap } = colorMaps[state.nodes.colorBy];
+  const accent = BRAND_ACCENT;
+  const panel = 'rgba(255,255,255,0.96)';
+  const title = `${BRAND.name || 'Graph'} subgraph: #${data._seed_id}`;
+  const subtitle = `${N.toLocaleString()} nodes - ${L.toLocaleString()} edges - depth ${data._max_depth || ''}`;
+  const parts = [];
+
+  parts.push(`<?xml version="1.0" encoding="UTF-8"?>`);
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`);
+  parts.push(`<defs><style><![CDATA[
+    .title{font:700 24px Inter,Arial,sans-serif;fill:#111827}.subtitle{font:500 13px Inter,Arial,sans-serif;fill:#4b5563}
+    .level{font:700 11px Inter,Arial,sans-serif;fill:${accent};letter-spacing:.08em;text-transform:uppercase}
+    .node-label{font:700 13px Inter,Arial,sans-serif;fill:#111827}.node-meta{font:500 11px Inter,Arial,sans-serif;fill:#4b5563}
+    .edge-label{font:600 10px Inter,Arial,sans-serif;fill:#374151}.edge{fill:none;stroke-width:1.6;stroke-opacity:.72}
+  ]]></style><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8FA3B3"/></marker><marker id="arrow-upstream" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${UPSTREAM_HEX}"/></marker></defs>`);
+  parts.push(`<text class="title" x="48" y="48">${svgEscape(title)}</text>`);
+  parts.push(`<text class="subtitle" x="48" y="72">${svgEscape(subtitle)}</text>`);
+
+  layout.levels.forEach((level, pos) => {
+    const x = 72 + pos * 285;
+    const label = level === 999 ? 'Other' : `Depth ${level}`;
+    parts.push(`<text class="level" x="${x}" y="104">${svgEscape(label)}</text>`);
+  });
+
+  data.links.forEach((e, i) => {
+    const sIdx = idIndex.get(e.source);
+    const tIdx = idIndex.get(e.target);
+    const source = layout.nodesByIndex.get(sIdx);
+    const target = layout.nodesByIndex.get(tIdx);
+    if (!source || !target) return;
+    const start = rectBoundaryPoint(source, target);
+    const end = rectBoundaryPoint(target, source);
+    const sameLevel = source.level === target.level;
+    let path;
+    if (sameLevel) {
+      const bend = Math.max(source.w, target.w) * 0.7;
+      path = `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${(start.x + bend).toFixed(1)} ${(start.y - 28).toFixed(1)}, ${(end.x + bend).toFixed(1)} ${(end.y + 28).toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+    } else {
+      const midX = (start.x + end.x) / 2;
+      path = `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} C ${midX.toFixed(1)} ${start.y.toFixed(1)}, ${midX.toFixed(1)} ${end.y.toFixed(1)}, ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+    }
+    const upstream = source.level > target.level && target.level !== 999;
+    const edgeColour = upstream ? UPSTREAM_HEX : '#8FA3B3';
+    const marker = upstream ? 'arrow-upstream' : 'arrow';
+    parts.push(`<path class="edge" d="${path}" stroke="${edgeColour}" marker-end="url(#${marker})"/>`);
+    if (state.labels.edges && e.type) {
+      const labelX = ((start.x + end.x) / 2).toFixed(1);
+      const labelY = ((start.y + end.y) / 2 - 4).toFixed(1);
+      parts.push(`<text class="edge-label" x="${labelX}" y="${labelY}" text-anchor="middle">${svgEscape(e.type)}</text>`);
+    }
+  });
+
+  layout.nodesByIndex.forEach((box, nodeIndex) => {
+    const n = data.nodes[nodeIndex];
+    const colour = cmap[n[state.nodes.colorBy]] || accent;
+    const isSeed = nodeIndex === layout.seedIndex;
+    const x = box.x - box.w / 2;
+    const y = box.y - box.h / 2;
+    const labelLines = splitSvgLabel(n.label);
+    parts.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${box.w}" height="${box.h}" rx="8" fill="${panel}" stroke="${svgAttr(isSeed ? '#FFFFFF' : colour)}" stroke-width="${isSeed ? 4 : 2}"/>`);
+    parts.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="7" height="${box.h}" rx="4" fill="${svgAttr(colour)}"/>`);
+    labelLines.forEach((line, lineNo) => {
+      parts.push(`<text class="node-label" x="${(x + 18).toFixed(1)}" y="${(y + 24 + lineNo * 15).toFixed(1)}">${svgEscape(line)}</text>`);
+    });
+    const meta = `${n.category || 'Unknown'} - ${n.community || 'No community'} - ${n.role || 'No role'}`;
+    parts.push(`<text class="node-meta" x="${(x + 18).toFixed(1)}" y="${(y + box.h - 12).toFixed(1)}">${svgEscape(meta)}</text>`);
+    if (isSeed) {
+      parts.push(`<text class="level" x="${(x + box.w - 44).toFixed(1)}" y="${(y + 18).toFixed(1)}">SEED</text>`);
+    }
+  });
+
+  parts.push(`</svg>`);
+  return parts.join('\n');
+}
+
+function downloadSubgraphSvg() {
+  try {
+    const svg = buildSubgraphSvg();
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `subgraph-${data._seed_id}-depth-${data._max_depth || 'x'}.svg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    bfsErr.textContent = '';
+  } catch (err) {
+    bfsErr.textContent = err.message || 'Could not export this subgraph.';
+  }
+}
 
 const BREADCRUMB_KEY = 'teraGraphExplorerBreadcrumbs';
 const NEXT_CRUMB_KEY = 'teraGraphExplorerNextCrumbLabel';
@@ -1899,6 +2164,9 @@ function queueNextCrumb(label) {
       bfsDepthVal.textContent = d;
     }
   }
+
+  const svgExportButton = document.getElementById('btn-svg-export');
+  if (svgExportButton) svgExportButton.disabled = seedId == null;
 
   if (isEmpty) {
     bfsStatusMode.textContent = 'no data';
@@ -2070,6 +2338,7 @@ document.getElementById('btn-bfs-run').onclick = async () => {
 };
 
 document.getElementById('btn-bfs-reset').onclick = () => navigateTo(null, null, { full: true, label: 'Full graph' });
+document.getElementById('btn-svg-export').onclick = downloadSubgraphSvg;
 
 // Submit on Enter in the seed input
 bfsSeedInput.addEventListener('keydown', (ev) => {
