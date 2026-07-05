@@ -140,7 +140,7 @@ const state = {
              linkDistance: 10, friction: 0.85, decay: 2000 },
   nodes:   { colorBy: 'community', sizeScale: 0.3, opacity: 1.0 },
   edges:   { curved: true, arrows: false, widthScale: 1.0, opacity: 1.0 },
-  layout:  { mode: 'community' },
+  layout:  { mode: 'original' },
   search:  { query: '', matches: new Set(), remote: [] },
   focused:     null,                            // selected point index, or null
   pinnedLabel: null,                            // node index whose label is always visible
@@ -1468,7 +1468,8 @@ function settleLayoutView({ fit = true, message = 'Applying layout...' } = {}) {
 }
 
 function applyLayout({ fit = true } = {}) {
-  showGraphLoading('Applying layout...');
+  const originalForce = state.layout.mode === 'original' && !isCanvasRenderer;
+  showGraphLoading(originalForce ? 'Restoring original render...' : 'Applying layout...');
   if (!isCanvasRenderer) graph.pause();
   seedPositions();
   graph.setPointPositions(pointPositions);
@@ -1477,6 +1478,14 @@ function applyLayout({ fit = true } = {}) {
   if (isCanvasRenderer) {
     if (fit) graph.fitView(750);
     hideGraphLoading();
+    return;
+  }
+
+  if (originalForce) {
+    paused = false;
+    btnPause.textContent = 'Pause';
+    graph.start(1.0);
+    pauseAndCentre(1200, 'Restoring original render...');
     return;
   }
 
@@ -1501,7 +1510,7 @@ function bindSlider(sliderId, valueId, getter, setter, onChange) {
 }
 
 const layoutSelect = document.getElementById('sel-layout');
-if (![...layoutSelect.options].some(opt => opt.value === state.layout.mode)) state.layout.mode = 'community';
+if (![...layoutSelect.options].some(opt => opt.value === state.layout.mode)) state.layout.mode = 'original';
 layoutSelect.value = state.layout.mode;
 document.getElementById('sel-colorBy').value = state.nodes.colorBy;
 document.getElementById('chk-curved').checked = state.edges.curved;

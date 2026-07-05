@@ -165,6 +165,7 @@ __BRAND_STYLE__
     <div class="row-h">
       <label for="sel-layout">Layout</label>
       <select id="sel-layout">
+        <option value="original">Original force</option>
         <option value="community">Community clusters</option>
         <option value="bfs">Relationship rings</option>
         <option value="category">Category columns</option>
