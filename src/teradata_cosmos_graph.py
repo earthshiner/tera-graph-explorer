@@ -53,6 +53,7 @@ from graph_data import (
     fetch_full_graph,
     qualify_table,
     resolve_seed_label,
+    search_nodes,
 )
 from html_renderer import render_html, render_html_str
 
@@ -169,8 +170,17 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
             self.end_headers()
             self.wfile.write(body)
 
+        def send_json(self, payload: dict):
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_POST(self):
-            if self.path != "/api/bfs":
+            if self.path not in ("/api/bfs", "/api/search"):
                 self.send_json_error(404, "Endpoint not found")
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -180,6 +190,20 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 self.send_json_error(400, "Bad JSON")
                 return
             try:
+                if self.path == "/api/search":
+                    query = payload.get("query", "")
+                    if not str(query).strip():
+                        self.send_json({"nodes": []})
+                        return
+                    with query_lock:
+                        nodes = search_nodes(
+                            conn, database, query, payload.get("limit", 8),
+                            payload.get("importance_min"),
+                            payload.get("importance_max"),
+                        )
+                    self.send_json({"nodes": nodes})
+                    return
+
                 if "seed_id" in payload:
                     seed_id = int(payload["seed_id"])
                 elif "seed_label" in payload:
@@ -188,19 +212,13 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 else:
                     self.send_json_error(400, "Need seed_id or seed_label")
                     return
-                resp = json.dumps({"seed_id": seed_id}).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(resp)))
-                self.end_headers()
-                self.wfile.write(resp)
+                self.send_json({"seed_id": seed_id})
             except Exception as e:
-                print(f"  [api] BFS failed: {e}")
+                print(f"  [api] request failed: {e}")
                 self.send_json_error(
                     500,
-                    "BFS lookup failed. Check the seed label and database query syntax.",
+                    "Lookup failed. Check the label and database query syntax.",
                 )
-
     class GraphHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         allow_reuse_address = True
         daemon_threads = True
