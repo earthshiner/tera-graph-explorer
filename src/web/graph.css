@@ -153,6 +153,25 @@
   #legend .swatch { width: 10px; height: 10px; border-radius: 50%;
                     flex-shrink: 0; }
 
+  #sql-pane { position: absolute; top: 16px; left: 16px; z-index: 20;
+              width: min(560px, calc(100% - 360px)); max-height: 70vh;
+              display: flex; flex-direction: column;
+              background: var(--panel-solid); border: 1px solid var(--border);
+              border-radius: 8px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); }
+  #sql-pane-head { display: flex; align-items: center; gap: 10px;
+                   padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  #sql-pane-head strong { font-size: 13px; }
+  #sql-pane-scope { color: var(--muted); font-size: 12px; flex: 1;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #sql-pane-actions { display: flex; gap: 6px; }
+  #sql-pane-actions button { background: var(--panel); border: 1px solid var(--border);
+                             color: var(--text); border-radius: 5px; padding: 3px 10px;
+                             font-size: 12px; cursor: pointer; }
+  #sql-pane-actions button:hover { background: var(--border-light); }
+  #sql-pane-code { margin: 0; padding: 12px 14px; overflow: auto;
+                   font: 12px/1.5 "SF Mono", Menlo, Consolas, monospace;
+                   color: #dbeafe; white-space: pre; }
+
   #controls { position: absolute; top: 0; right: 0; bottom: 0; width: 320px;
               box-sizing: border-box;
               background: var(--panel-solid); border-left: 1px solid var(--border);

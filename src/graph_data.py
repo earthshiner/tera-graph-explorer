@@ -385,6 +385,83 @@ def search_nodes(conn, database: str, query: str, limit: int = 8,
         )
         return _read_nodes(cur)
 
+
+_WEIGHT_QUERY_RE = re.compile(r"^([<>]=?|=)?\s*(\d*\.?\d+)$")
+
+
+def parse_weight_query(term: str):
+    """Parse a weight predicate like '>0.7', '<=0.5', or a bare number (>=)."""
+    match = _WEIGHT_QUERY_RE.match((term or "").strip())
+    if not match:
+        return None
+    op = match.group(1) or ">="
+    try:
+        val = float(match.group(2))
+    except ValueError:
+        return None
+    return op, val
+
+
+def search_edges(conn, database: str, query: str, limit: int = 12) -> list:
+    """Return whole-database edge matches for the relationship search.
+
+    Matches on edge type, either endpoint label, strength band, or a weight
+    predicate (>0.7 etc.). Used as the fallback when nothing matches in view.
+    """
+    edge_table = qualify_table(database, "graph_edges")
+    node_table = qualify_table(database, "graph_nodes")
+    term = " ".join(str(query or "").split()).lower()
+    if not term:
+        return []
+
+    try:
+        max_rows = int(limit)
+    except (TypeError, ValueError):
+        max_rows = 12
+    max_rows = max(1, min(50, max_rows))
+
+    like = f"%{term}%"
+    or_preds = [
+        "LOWER(e.edge_type) LIKE ?",
+        "LOWER(s.node_label) LIKE ?",
+        "LOWER(t.node_label) LIKE ?",
+        "LOWER(e.strength) LIKE ?",
+    ]
+    params = [like, like, like, like]
+    weight = parse_weight_query(term)
+    if weight:
+        op, val = weight
+        or_preds.append(f"e.edge_weight {op} ?")
+        params.append(val)
+
+    set_query_band(conn, action="search_edges", graph_db=database)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT e.edge_id, e.source_id, s.node_label, e.edge_type, "
+            "e.target_id, t.node_label, e.edge_weight, e.strength "
+            f"FROM {edge_table} e "
+            f"JOIN {node_table} s ON s.node_id = e.source_id "
+            f"JOIN {node_table} t ON t.node_id = e.target_id "
+            f"WHERE ({' OR '.join(or_preds)}) "
+            "QUALIFY ROW_NUMBER() OVER (ORDER BY e.edge_weight DESC, e.edge_id) <= ?",
+            (*params, max_rows),
+        )
+        rows = cur.fetchall()
+
+    return [
+        {
+            "edge_id": int(r[0]),
+            "source_id": int(r[1]),
+            "source_label": r[2],
+            "edge_type": r[3],
+            "target_id": int(r[4]),
+            "target_label": r[5],
+            "edge_weight": float(r[6]) if r[6] is not None else 0.5,
+            "strength": r[7],
+        }
+        for r in rows
+    ]
+
 def _read_nodes(cur) -> list:
     return [
         {
