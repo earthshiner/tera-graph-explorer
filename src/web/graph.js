@@ -2470,6 +2470,60 @@ function reportRelationshipBullet(group) {
   return `<li>${svgEscape(head)}<ul class="rel-targets">${items.join('')}</ul></li>`;
 }
 
+// Build a Teradata query that lets an analyst manually validate every
+// relationship in the report. Each traversed edge becomes one (source_id,
+// target_id) predicate; joining graph_edges back to graph_nodes confirms the
+// edge exists and resolves both node labels. Returns null if there is nothing
+// to validate. REPORT_SQL_MAX_PAIRS bounds the generated SQL for large views.
+const REPORT_SQL_MAX_PAIRS = 500;
+function reportValidationSql(edgeRows) {
+  const edgeTable = data._database ? `${data._database}.graph_edges` : 'graph_edges';
+  const nodeTable = data._database ? `${data._database}.graph_nodes` : 'graph_nodes';
+
+  const seen = new Set();
+  const pairs = [];
+  for (const row of edgeRows) {
+    const sourceId = Number(data.nodes[row.sourceIndex]?.id);
+    const targetId = Number(data.nodes[row.targetIndex]?.id);
+    if (!Number.isFinite(sourceId) || !Number.isFinite(targetId)) continue;
+    const key = `${sourceId}|${targetId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([sourceId, targetId]);
+  }
+  if (pairs.length === 0) return null;
+
+  const truncated = pairs.length > REPORT_SQL_MAX_PAIRS;
+  const shown = truncated ? pairs.slice(0, REPORT_SQL_MAX_PAIRS) : pairs;
+  const predicates = shown
+    .map(([s, t], i) => `${i === 0 ? 'WHERE   ' : '   OR   '}(e.source_id = ${s} AND e.target_id = ${t})`)
+    .join('\n');
+
+  const note = truncated
+    ? `-- NOTE: showing the first ${REPORT_SQL_MAX_PAIRS} of ${pairs.length} relationships.\n`
+    : '';
+
+  return (
+    `${note}` +
+    `/* Validation query: confirms every relationship in this report actually\n` +
+    `   exists in ${edgeTable}. Each predicate below is one edge from the report;\n` +
+    `   the joins verify it and resolve the node labels for eyeballing. */\n` +
+    `SELECT  e.edge_id,\n` +
+    `        e.source_id,\n` +
+    `        s.node_label   AS source_label,\n` +
+    `        e.edge_type,\n` +
+    `        e.target_id,\n` +
+    `        t.node_label   AS target_label,\n` +
+    `        e.edge_weight,\n` +
+    `        e.strength\n` +
+    `FROM        ${edgeTable} AS e\n` +
+    `INNER JOIN  ${nodeTable} AS s ON s.node_id = e.source_id\n` +
+    `INNER JOIN  ${nodeTable} AS t ON t.node_id = e.target_id\n` +
+    `${predicates}\n` +
+    `ORDER BY    source_label, target_label;`
+  );
+}
+
 function reportStyleSheet() {
   const accent = BRAND_ACCENT;
   return `
@@ -2505,6 +2559,12 @@ function reportStyleSheet() {
     .rel-list { margin: 0 0 14px; }
     .rel-list > li { margin: 3px 0; }
     .rel-targets { list-style: circle; margin: 3px 0 6px; }
+    pre.sql { background: #0f172a; color: #e2e8f0; border-radius: 8px;
+              padding: 16px 18px; overflow-x: auto; font-size: 12.5px;
+              line-height: 1.5; white-space: pre; }
+    pre.sql code { font: inherit; }
+    code { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
     .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
     th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line);
@@ -2655,6 +2715,17 @@ function buildRelationshipReport() {
     '<th class="num">Weight</th><th>Strength</th><th>Note</th></tr></thead><tbody>');
   edgeRows.forEach((row) => out.push(reportDetailRowHtml(row, seedIndex)));
   out.push('</tbody></table></div></section>');
+
+  // Validation SQL — lets the reader confirm every relationship against the
+  // source database by hand.
+  const validationSql = reportValidationSql(edgeRows);
+  if (validationSql) {
+    out.push('<section><h2>Validation SQL</h2>');
+    out.push(`<p>Run this against <code>${svgEscape(database)}</code> to verify every relationship above directly from ` +
+      '<code>graph_edges</code> / <code>graph_nodes</code>:</p>');
+    out.push(`<pre class="sql"><code>${svgEscape(validationSql)}</code></pre>`);
+    out.push('</section>');
+  }
 
   // Inline diagram — strip the XML prolog so the SVG embeds cleanly in HTML.
   try {
