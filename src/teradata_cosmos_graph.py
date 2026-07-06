@@ -38,6 +38,7 @@ import json
 import os
 import sys
 import webbrowser
+from getpass import getpass
 from pathlib import Path
 
 try:
@@ -49,6 +50,7 @@ except ImportError:
 from branding import load_brand_config
 from graph_data import (
     DEFAULT_DATABASE,
+    fetch_ancestors,
     fetch_bfs_subgraph,
     fetch_full_graph,
     qualify_table,
@@ -287,7 +289,7 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
             self.wfile.write(body)
 
         def do_POST(self):
-            if self.path not in ("/api/bfs", "/api/search"):
+            if self.path not in ("/api/bfs", "/api/search", "/api/ancestors"):
                 self.send_json_error(404, "Endpoint not found")
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -297,6 +299,19 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 self.send_json_error(400, "Bad JSON")
                 return
             try:
+                if self.path == "/api/ancestors":
+                    if "node_id" not in payload:
+                        self.send_json_error(400, "Need node_id")
+                        return
+                    node_id = int(payload["node_id"])
+                    with query_lock:
+                        result = run_teradata(lambda active_conn: fetch_ancestors(
+                            active_conn, database, node_id,
+                            payload.get("types"),
+                        ))
+                    self.send_json(result)
+                    return
+
                 if self.path == "/api/search":
                     query = payload.get("query", "")
                     if not str(query).strip():
@@ -363,7 +378,7 @@ def main() -> None:
                              "'serve' = HTTP server with runtime BFS reload")
     parser.add_argument("--host", default=os.getenv("TD_HOST", "test-qjy3yjoejwmmt9rf.env.trial.teradata.com"))
     parser.add_argument("--user", default=os.getenv("TD_USER", "demo_user"))
-    parser.add_argument("--password", default=os.getenv("TD_PASSWORD", "Test@123"))
+    parser.add_argument("--password", default=os.getenv("TD_PASSWORD"))
     parser.add_argument("--logmech",  default=os.getenv("TD_LOGMECH", "TD2"))
     parser.add_argument("--database", default=os.getenv("TD_DATABASE", DEFAULT_DATABASE),
                         help="Database containing graph_nodes and graph_edges "
@@ -385,6 +400,9 @@ def main() -> None:
                         help="BFS depth cap (1-6, default 2). Ignored without a seed.")
 
     args = parser.parse_args()
+
+    if not args.password:
+        args.password = getpass("Teradata password: ")
 
     missing = [k for k in ("host", "user", "password", "database") if not getattr(args, k)]
     if missing:

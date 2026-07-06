@@ -14,6 +14,15 @@ FILTER_COLUMNS = {
 }
 EDGE_FILTER_KEYS = {"edge_type", "strong"}
 STRONG_EDGE_WEIGHT = 0.70
+# Known edge types — used to allow-list the parent edge types supplied to the
+# ancestor walk so they can be interpolated into SQL safely.
+KNOWN_EDGE_TYPES = {
+    "transfers_to", "owns", "recruited", "controls", "uses",
+    "launders_to", "introduced", "co_owns", "victim_of",
+    "employs", "launders_via",
+}
+DEFAULT_PARENT_EDGE_TYPES = ("recruited", "controls", "employs")
+ANCESTOR_MAX_LEVELS = 25
 QUERY_BAND_APP = "tera_graph_explorer"
 QUERY_BAND_MAX_VALUE_LEN = 120
 
@@ -72,6 +81,92 @@ def validate_edge_filter(edge_filter_key: str | None) -> str | None:
     if edge_filter_key not in EDGE_FILTER_KEYS:
         raise ValueError("edge_filter_key must be one of: edge_type, strong")
     return edge_filter_key
+
+
+def sanitise_parent_types(types) -> list[str]:
+    """Filter requested parent edge types to the known set (SQL-safe)."""
+    if not types:
+        return list(DEFAULT_PARENT_EDGE_TYPES)
+    clean = [t for t in types if t in KNOWN_EDGE_TYPES]
+    return clean or list(DEFAULT_PARENT_EDGE_TYPES)
+
+
+def fetch_ancestors(conn, database: str, node_id: int, parent_types=None,
+                    max_levels: int = ANCESTOR_MAX_LEVELS) -> dict:
+    """Walk upward from ``node_id`` to the ultimate parent(s).
+
+    Every edge points parent -> child, so "up" means following an edge from the
+    child (target) to the parent (source). A recursive CTE climbs the chain
+    through the given parent edge types, guarded against cycles (via a path
+    string) and capped at ``max_levels``. Returns the chain ordered by level
+    plus the root (ultimate-parent) rows.
+    """
+    edge_table = qualify_table(database, "graph_edges")
+    node_table = qualify_table(database, "graph_nodes")
+    types = sanitise_parent_types(parent_types)
+    in_list = ", ".join(f"'{t}'" for t in types)          # types are allow-listed above
+    seed = int(node_id)
+    max_levels = max(1, min(int(max_levels), 50))
+
+    # Recursive walk: anchor on the seed, then repeatedly hop to any node that
+    # points INTO the current node via a parent edge type, until none remain.
+    sql = (
+        "WITH RECURSIVE up_chain (node_id, lvl, via_type, child_id, path) AS (\n"
+        "    SELECT n.node_id, 0, CAST(NULL AS VARCHAR(64)), CAST(NULL AS INTEGER),\n"
+        "           CAST('>' || CAST(n.node_id AS VARCHAR(20)) || '>' AS VARCHAR(2000))\n"
+        f"    FROM {node_table} n\n"
+        f"    WHERE n.node_id = {seed}\n"
+        "  UNION ALL\n"
+        "    SELECT e.source_id, u.lvl + 1, e.edge_type, u.node_id,\n"
+        "           CAST(u.path || CAST(e.source_id AS VARCHAR(20)) || '>' AS VARCHAR(2000))\n"
+        "    FROM up_chain u\n"
+        f"    JOIN {edge_table} e ON e.target_id = u.node_id\n"
+        f"    WHERE e.edge_type IN ({in_list})\n"
+        f"      AND u.lvl < {max_levels}\n"
+        "      AND u.path NOT LIKE '%>' || CAST(e.source_id AS VARCHAR(20)) || '>%'\n"
+        ")\n"
+        "SELECT u.lvl, u.node_id, n.node_label, n.node_role, u.via_type, u.child_id\n"
+        "FROM up_chain u\n"
+        f"JOIN {node_table} n ON n.node_id = u.node_id\n"
+        "ORDER BY u.lvl"
+    )
+
+    set_query_band(conn, action="ancestors", graph_db=database, seed_id=seed)
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+
+    chain = []
+    child_ids = set()
+    for lvl, nid, label, role, via_type, child_id in rows:
+        chain.append({
+            "node_id": int(nid),
+            "level": int(lvl),
+            "label": label,
+            "role": role,
+            "via_type": via_type,
+            "child_id": int(child_id) if child_id is not None else None,
+        })
+        if child_id is not None:
+            child_ids.add(int(child_id))
+
+    # A root (ultimate parent) is a walked node that is never a descendant in
+    # the chain — i.e. nothing higher points into it. Dedupe by node_id.
+    roots, seen = [], set()
+    for c in chain:
+        if c["level"] > 0 and c["node_id"] not in child_ids and c["node_id"] not in seen:
+            seen.add(c["node_id"])
+            roots.append(c)
+    if not roots and chain:                    # the seed itself has no parents
+        roots = [chain[0]]
+
+    return {
+        "node_id": seed,
+        "parent_types": types,
+        "chain": chain,
+        "roots": roots,
+        "truncated": any(c["level"] >= max_levels for c in chain),
+    }
 
 
 def edge_filter_sql(alias: str, edge_filter_key: str | None,
