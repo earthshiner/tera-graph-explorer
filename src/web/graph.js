@@ -75,10 +75,38 @@ if (HAS_WEBGL && !FORCE_CANVAS) {
 const data = __DATA__;
 const BRAND = data._brand || {};
 const BRAND_ACCENT = BRAND.accent || '#FF5F02';
-const BRAND_BACKGROUND = BRAND.background || '#00233C';
+const CSS_BACKGROUND = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+const BRAND_BACKGROUND = CSS_BACKGROUND || BRAND.background || '#1F1F1F';
 const N = data.nodes.length;
 const L = data.links.length;
 const idIndex = new Map(data.nodes.map((n, i) => [n.id, i]));
+
+function nodeIndexById(value) {
+  if (value == null || value === '') return null;
+  if (idIndex.has(value)) return idIndex.get(value);
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && idIndex.has(numeric)) return idIndex.get(numeric);
+  const text = String(value);
+  if (idIndex.has(text)) return idIndex.get(text);
+  return null;
+}
+
+function currentSeedNodeId() {
+  if (data._seed_id != null) return data._seed_id;
+  try {
+    const value = new URLSearchParams(window.location.search).get('seed_id');
+    return value == null ? null : value;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Resolved point index of the explored seed (or null). Declared here — not in
+// the LABELS section — because rebuildPointColors() reads it during the initial
+// render, which runs first. A `const` declared later would be in its temporal
+// dead zone at that point and throw, aborting init and leaving the loading
+// overlay stuck on "Centering graph...".
+const seedIndex = nodeIndexById(currentSeedNodeId());
 
 // ---- neighborhood index (for selection highlighting) ---- //
 const neighborOf  = new Map();   // pointIndex -> Set<neighborPointIndex>
@@ -418,6 +446,11 @@ function rebuildPointColors() {
       outR += (1 - outR) * lift;
       outG += (1 - outG) * lift;
       outB += (1 - outB) * lift;
+    }
+
+    if (seedIndex != null && i === seedIndex) {
+      [outR, outG, outB] = ORANGE_RGB;
+      alpha = 1;
     }
 
     pointColors[i * 4]     = outR;
@@ -797,7 +830,7 @@ class CanvasFallbackGraph {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.restore();
-    ctx.fillStyle = '#00233C';
+    ctx.fillStyle = this.config.backgroundColor || BRAND_BACKGROUND;
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     ctx.save();
@@ -1294,6 +1327,12 @@ function setFocused(i) {
   rebuildPointColors();
   rebuildLinkColors();
   rebuildLinkWidths();
+  // Keep the projection loop alive for the found halo, and hide it at once on
+  // clear so no stale frame lingers after the loop stops.
+  if (state.focused == null || state.focused === seedIndex) {
+    foundHaloEl.style.display = 'none';
+  }
+  syncLabelLoop();
 }
 
 function setFocusedEdge(i) {
@@ -1874,13 +1913,19 @@ searchAttributeSelects.forEach(({ el }) => {
 // ============================================================ //
 
 const labelLayer = document.getElementById('labels');
-const seedIndex = data._seed_id == null ? null : idIndex.get(data._seed_id);
 const seedHaloEl = seedIndex == null ? null : document.createElement('div');
 if (seedHaloEl) {
   seedHaloEl.className = 'seed-halo';
   seedHaloEl.title = 'Explored entity';
   labelLayer.appendChild(seedHaloEl);
 }
+
+// Halo that marks the currently found / selected entity. Positioned each
+// frame in projectAndUpdateLabels(), toggled by setFocused().
+const foundHaloEl = document.createElement('div');
+foundHaloEl.className = 'found-halo';
+foundHaloEl.title = 'Found entity';
+labelLayer.appendChild(foundHaloEl);
 
 // Pre-create one DOM element per node and per edge; toggle visibility via state
 const nodeLabelEls = data.nodes.map((n) => {
@@ -1929,6 +1974,24 @@ function projectAndUpdateLabels() {
     } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
   }
 
+  // Found/selected entity halo — suppressed when it coincides with the seed
+  // (the SEED halo already marks that node).
+  const foundIndex = state.focused;
+  if (foundIndex != null && foundIndex !== seedIndex) {
+    try {
+      const sp = graph.spaceToScreenPosition([
+        positions[foundIndex * 2],
+        positions[foundIndex * 2 + 1],
+      ]);
+      if (sp) {
+        foundHaloEl.style.display = 'block';
+        foundHaloEl.style.transform = `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
+      }
+    } catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
+  } else {
+    foundHaloEl.style.display = 'none';
+  }
+
   for (let i = 0; i < N; i++) {
     const showThisLabel = showN || i === pinnedLabel;
     nodeLabelEls[i].style.display = showThisLabel ? 'block' : 'none';
@@ -1975,19 +2038,28 @@ function stopLabelLoop() {
   }
 }
 
+// The projection loop must run whenever anything it positions is on screen:
+// a halo (seed or found), a pinned label, or the label overlays.
+function labelLoopNeeded() {
+  return seedIndex != null || state.focused != null || state.pinnedLabel != null
+      || state.labels.nodes || state.labels.edges;
+}
+function syncLabelLoop() {
+  if (labelLoopNeeded()) startLabelLoop();
+  else stopLabelLoop();
+}
+
 function setNodeLabelsVisible(show) {
   state.labels.nodes = show;
   nodeLabelEls.forEach((el, i) => {
     el.style.display = (show || i === state.pinnedLabel) ? 'block' : 'none';
   });
-  if (seedHaloEl || state.pinnedLabel != null || state.labels.nodes || state.labels.edges) startLabelLoop();
-  else stopLabelLoop();
+  syncLabelLoop();
 }
 function setEdgeLabelsVisible(show) {
   state.labels.edges = show;
   edgeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
-  if (seedHaloEl || state.pinnedLabel != null || state.labels.nodes || state.labels.edges) startLabelLoop();
-  else stopLabelLoop();
+  syncLabelLoop();
 }
 
 document.getElementById('chk-nodeLabels').addEventListener('change', (ev) => {
@@ -2001,7 +2073,7 @@ document.getElementById('chk-edgeLabels').addEventListener('change', (ev) => {
 state.pinnedLabel = seedIndex ?? null;
 setNodeLabelsVisible(state.labels.nodes);
 setEdgeLabelsVisible(state.labels.edges);
-if (seedHaloEl || state.pinnedLabel != null) startLabelLoop();
+syncLabelLoop();
 
 // ============================================================ //
 //                    ENTITY EXPLORATION RELOAD                 //
@@ -2083,7 +2155,7 @@ function rectBoundaryPoint(source, target, inset = 4) {
 }
 
 function nodeExportLayout() {
-  const exportSeedIndex = data._seed_id == null ? 0 : idIndex.get(data._seed_id);
+  const exportSeedIndex = nodeIndexById(currentSeedNodeId()) ?? 0;
   const levels = bfsLevels(exportSeedIndex ?? 0);
   const buckets = new Map();
   for (let i = 0; i < N; i++) {
@@ -2269,8 +2341,8 @@ function reportList(names) {
 function reportEdgesByDepth(levels) {
   const rows = [];
   data.links.forEach((edge) => {
-    const sourceIndex = idIndex.get(edge.source);
-    const targetIndex = idIndex.get(edge.target);
+    const sourceIndex = nodeIndexById(edge.source);
+    const targetIndex = nodeIndexById(edge.target);
     if (sourceIndex == null || targetIndex == null) return;
     const sourceLevel = levels[sourceIndex];
     const targetLevel = levels[targetIndex];
@@ -2292,22 +2364,57 @@ function reportEdgesByDepth(levels) {
   });
 }
 
-function reportEdgeDetailParts(edge) {
-  const details = [];
-  if (edge.weight != null) details.push(`weight ${edge.weight}`);
-  if (edge.strength != null) details.push(`strength ${edge.strength}`);
-  return details;
+function reportWeight(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(2) : '';
 }
 
-function reportEdgeLine(row, focusIndex = null) {
+// Relations with a clean passive form, so upstream edges can read focus-first
+// (e.g. "Henry Levy was recruited by Lily Martinez"). Anything not listed here
+// falls back to active voice, which is always grammatical.
+const UPSTREAM_PASSIVE = {
+  'recruited': 'was recruited by',
+  'owns': 'is owned by',
+  'owned': 'was owned by',
+  'controls': 'is controlled by',
+  'controlled': 'was controlled by',
+  'employs': 'is employed by',
+  'employed': 'was employed by',
+  'manages': 'is managed by',
+  'managed': 'was managed by',
+  'created': 'was created by',
+  'funds': 'is funded by',
+  'funded': 'was funded by',
+  'directs': 'is directed by',
+  'operates': 'is operated by',
+};
+
+// Plain-English reading of an upstream edge. Prefers a focus-first passive
+// ("Henry Levy was recruited by Lily Martinez."); otherwise active voice
+// ("Acct #446 transfers to Henry Levy.") — the source acts on the focus entity.
+function reportUpstreamSentence(row, seedNode) {
+  const sourceNode = data.nodes[row.sourceIndex];
+  const relation = reportRelation(row.edge);
+  const passive = UPSTREAM_PASSIVE[relation];
+  if (passive) {
+    return `${reportNodeName(seedNode)} ${passive} ${reportNodeName(sourceNode)}.`;
+  }
+  return `${reportNodeName(sourceNode)} ${relation} ${reportNodeName(seedNode)}.`;
+}
+
+function reportDetailRowHtml(row, focusIndex = null) {
   const sourceNode = data.nodes[row.sourceIndex];
   const targetNode = data.nodes[row.targetIndex];
-  const details = reportEdgeDetailParts(row.edge);
-  const suffix = details.length ? ` (${details.join(', ')})` : '';
-  const upstream = focusIndex != null && row.targetIndex === focusIndex
-    ? ' [upstream into focus entity]'
-    : '';
-  return `- Depth ${row.depth}: ${reportNodeName(sourceNode)} --${reportRelation(row.edge)}--> ${reportNodeName(targetNode)}${suffix}${upstream}`;
+  const upstream = focusIndex != null && row.targetIndex === focusIndex;
+  return `<tr class="${upstream ? 'is-upstream' : ''}">` +
+    `<td class="num">${row.depth}</td>` +
+    `<td>${svgEscape(reportNodeName(sourceNode))}</td>` +
+    `<td class="rel">${svgEscape(reportRelation(row.edge))}</td>` +
+    `<td>${svgEscape(reportNodeName(targetNode))}</td>` +
+    `<td class="num">${reportWeight(row.edge.weight)}</td>` +
+    `<td>${svgEscape(row.edge.strength ?? '')}</td>` +
+    `<td class="note">${upstream ? '&uarr; into focus' : ''}</td>` +
+    `</tr>`;
 }
 function reportNarrativeGroups(levels) {
   const groups = new Map();
@@ -2333,12 +2440,97 @@ function reportNarrativeGroups(levels) {
   });
 }
 
+// Heading for a source entity in the narrative, e.g. "Lily Martinez (Lieutenant):".
+function reportSourceHeading(sourceNode) {
+  const name = reportNodeName(sourceNode);
+  const kind = reportEntityKind(sourceNode);
+  return kind && kind.toLowerCase() !== 'entity' ? `${name} (${kind}):` : `${name}:`;
+}
+
+// One relationship bullet under a source heading. A single target reads inline
+// ("employs Forger Anton Sanchez."); multiple targets become a sub-list under
+// "…the following <Kind> entities:" with a trailing Oxford-comma "and".
+function reportRelationshipBullet(group) {
+  if (group.targets.length === 1) {
+    return `<li>${svgEscape(`${group.relation} ${reportEntityPhrase(group.targets[0])}.`)}</li>`;
+  }
+  const names = group.targets.map(reportNodeName).sort((a, b) => a.localeCompare(b));
+  const head = `${group.relation} the following ${reportPluralKind(group.kind)}:`;
+  const items = names.map((name, i) => {
+    let connector = ',';
+    if (i === names.length - 1) connector = '.';
+    else if (i === names.length - 2) connector = names.length === 2 ? ' and' : ', and';
+    return `<li>${svgEscape(name + connector)}</li>`;
+  });
+  return `<li>${svgEscape(head)}<ul class="rel-targets">${items.join('')}</ul></li>`;
+}
+
+function reportStyleSheet() {
+  const accent = BRAND_ACCENT;
+  return `
+    :root { --accent: ${accent}; --ink: #1f2933; --muted: #6b7785;
+            --line: #e2e8f0; --panel: #f8fafc; --up: #2f8f3f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 40px 32px 64px;
+           font: 15px/1.6 Inter, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+           color: var(--ink); background: #ffffff; }
+    main { max-width: 960px; margin: 0 auto; }
+    header { border-bottom: 3px solid var(--accent); padding-bottom: 20px; margin-bottom: 28px; }
+    .brand { color: var(--accent); font-weight: 800; text-transform: uppercase;
+             letter-spacing: .12em; font-size: 12px; }
+    h1 { font-size: 26px; margin: 6px 0 18px; }
+    h2 { font-size: 18px; margin: 34px 0 12px; padding-bottom: 6px;
+         border-bottom: 1px solid var(--line); }
+    h3 { font-size: 14px; margin: 20px 0 8px; color: var(--muted);
+         text-transform: uppercase; letter-spacing: .06em; }
+    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px 28px; margin: 0; }
+    .meta div { display: flex; flex-direction: column; }
+    .meta .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+               color: var(--muted); font-weight: 700; }
+    .meta .v { font-size: 15px; }
+    .summary { background: var(--panel); border: 1px solid var(--line);
+               border-radius: 10px; padding: 18px 22px; }
+    .summary h2 { margin-top: 0; border: 0; padding: 0; }
+    ul { margin: 8px 0; padding-left: 22px; }
+    li { margin: 4px 0; }
+    p { margin: 8px 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .rel-source { font-weight: 700; margin: 16px 0 4px; }
+    .rel-list { margin: 0 0 14px; }
+    .rel-list > li { margin: 3px 0; }
+    .rel-targets { list-style: circle; margin: 3px 0 6px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line);
+             white-space: nowrap; }
+    th { background: var(--panel); font-size: 11px; text-transform: uppercase;
+         letter-spacing: .05em; color: var(--muted); position: sticky; top: 0; }
+    tbody tr:nth-child(even) { background: #fcfdfe; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.rel { color: var(--accent); font-weight: 600; }
+    td.note { color: var(--up); font-weight: 600; }
+    tr.is-upstream { background: rgba(47, 143, 63, 0.06); }
+    tr.is-upstream:nth-child(even) { background: rgba(47, 143, 63, 0.09); }
+    .diagram { border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+               overflow-x: auto; background: var(--panel); }
+    .diagram svg { max-width: 100%; height: auto; display: block; }
+    footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line);
+             color: var(--muted); font-size: 12px; }
+    @media print {
+      body { padding: 0; } .summary, .table-wrap, .diagram { break-inside: avoid; }
+      th { position: static; }
+    }
+  `;
+}
+
 function buildRelationshipReport() {
   if (N === 0 || data._seed_id == null) {
     throw new Error('Open an entity relationship view before downloading a report.');
   }
 
-  const seedIndex = idIndex.get(data._seed_id);
+  const seedIndex = nodeIndexById(currentSeedNodeId());
   if (seedIndex == null) {
     throw new Error('The focused entity is not available in this graph view.');
   }
@@ -2351,85 +2543,135 @@ function buildRelationshipReport() {
   const generated = new Date().toLocaleString();
   const database = data._database || 'current database';
   const maxDepth = data._max_depth || Math.max(...levels.filter((level) => level >= 0));
-  const lines = [];
+  const brandName = BRAND.name || 'Graph';
 
-  lines.push('# Relationship Investigation Report');
-  lines.push(`Generated: ${generated}`);
-  lines.push(`Database: ${database}`);
-  lines.push(`Focus entity: ${reportEntityPhrase(seedNode)} (#${seedNode.id})`);
-  lines.push(`Relationship depth: ${maxDepth}`);
-  lines.push(`Scope: ${N.toLocaleString()} entities, ${L.toLocaleString()} relationships`);
-  lines.push('');
-
-  lines.push('## Executive summary');
-  lines.push(`${reportNodeName(seedNode)} is the focus entity for this relationship view. The current graph contains ${N.toLocaleString()} entities and ${L.toLocaleString()} relationships within depth ${maxDepth}.`);
-  if (upstreamToFocusRows.length > 0) {
-    lines.push(`${upstreamToFocusRows.length.toLocaleString()} relationship${upstreamToFocusRows.length === 1 ? ' points' : 's point'} upstream into ${reportNodeName(seedNode)}, where the focus entity is the target node.`);
-  }
-  narrativeGroups.slice(0, 8).forEach((group) => {
+  // Reusable prose for a narrative group (single target vs. list).
+  const groupSentence = (group) => {
     const sourceNode = data.nodes[group.sourceIndex];
     const targetNames = group.targets.map(reportNodeName).sort((a, b) => a.localeCompare(b));
     if (targetNames.length === 1) {
-      lines.push(reportSentence(sourceNode, { type: group.relation }, group.targets[0], true));
-    } else {
-      lines.push(`${reportNodeName(sourceNode)} ${group.relation} the following ${reportPluralKind(group.kind)}: ${reportList(targetNames)}.`);
+      return reportSentence(sourceNode, { type: group.relation }, group.targets[0], true);
     }
-  });
-  if (narrativeGroups.length > 8) {
-    lines.push(`A further ${(narrativeGroups.length - 8).toLocaleString()} relationship groups are listed below.`);
-  }
-  lines.push('');
+    return `${reportNodeName(sourceNode)} ${group.relation} the following ` +
+           `${reportPluralKind(group.kind)}: ${reportList(targetNames)}.`;
+  };
 
-  if (upstreamToFocusRows.length > 0) {
-    lines.push('## Upstream relationships into focus entity');
-    lines.push(`These relationships point into ${reportNodeName(seedNode)}. In each case, the focus entity is the target node.`);
-    upstreamToFocusRows.forEach((row) => {
-      lines.push(reportEdgeLine(row, seedIndex));
-    });
-    lines.push('');
+  const out = [];
+  out.push('<!doctype html><html lang="en"><head><meta charset="utf-8">');
+  out.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
+  out.push(`<title>Relationship Report · #${svgEscape(seedNode.id)} · ${svgEscape(brandName)}</title>`);
+  out.push(`<style>${reportStyleSheet()}</style></head><body><main>`);
+
+  // Header + metadata
+  out.push('<header>');
+  out.push(`<div class="brand">${svgEscape(brandName)}</div>`);
+  out.push('<h1>Relationship Investigation Report</h1>');
+  out.push('<div class="meta">');
+  out.push(`<div><span class="k">Focus entity</span><span class="v">${svgEscape(reportEntityPhrase(seedNode))} (#${svgEscape(seedNode.id)})</span></div>`);
+  out.push(`<div><span class="k">Relationship depth</span><span class="v">${svgEscape(maxDepth)}</span></div>`);
+  out.push(`<div><span class="k">Database</span><span class="v">${svgEscape(database)}</span></div>`);
+  out.push(`<div><span class="k">Scope</span><span class="v">${N.toLocaleString()} entities · ${L.toLocaleString()} relationships</span></div>`);
+  out.push(`<div><span class="k">Generated</span><span class="v">${svgEscape(generated)}</span></div>`);
+  out.push('</div></header>');
+
+  // Executive summary
+  out.push('<section class="summary"><h2>Executive summary</h2>');
+  out.push(`<p>${svgEscape(reportNodeName(seedNode))} is the focus entity for this relationship view. ` +
+    `The current graph contains ${N.toLocaleString()} entities and ${L.toLocaleString()} ` +
+    `relationships within depth ${svgEscape(maxDepth)}.</p>`);
+  if (upstreamToFocusRows.length === 1) {
+    out.push(`<p>${svgEscape(reportUpstreamSentence(upstreamToFocusRows[0], seedNode))}</p>`);
+  } else if (upstreamToFocusRows.length > 1) {
+    out.push(`<p>${upstreamToFocusRows.length.toLocaleString()} relationships point directly into ${svgEscape(reportNodeName(seedNode))}:</p><ul>`);
+    upstreamToFocusRows.slice(0, 6).forEach((row) =>
+      out.push(`<li>${svgEscape(reportUpstreamSentence(row, seedNode))}</li>`));
+    out.push('</ul>');
+    if (upstreamToFocusRows.length > 6) {
+      out.push(`<p class="muted">…and ${(upstreamToFocusRows.length - 6).toLocaleString()} more, listed below.</p>`);
+    }
   }
-  lines.push('## Relationship narrative');
-  let lastDepth = null;
-  narrativeGroups.forEach((group) => {
-    if (group.depth !== lastDepth) {
-      lines.push('');
-      lines.push(`### Depth ${group.depth}`);
-      lastDepth = group.depth;
+  if (narrativeGroups.length > 0) {
+    out.push('<ul>');
+    narrativeGroups.slice(0, 8).forEach((group) => out.push(`<li>${svgEscape(groupSentence(group))}</li>`));
+    out.push('</ul>');
+    if (narrativeGroups.length > 8) {
+      out.push(`<p class="muted">A further ${(narrativeGroups.length - 8).toLocaleString()} relationship groups are listed below.</p>`);
     }
-    const sourceNode = data.nodes[group.sourceIndex];
-    const targetNames = group.targets.map(reportNodeName).sort((a, b) => a.localeCompare(b));
-    if (targetNames.length === 1) {
-      lines.push(`- ${reportSentence(sourceNode, { type: group.relation }, group.targets[0], true)}`);
-    } else {
-      lines.push(`- ${reportNodeName(sourceNode)} ${group.relation} the following ${reportPluralKind(group.kind)}: ${reportList(targetNames)}.`);
-    }
-  });
+  }
+  out.push('</section>');
+
+  // Upstream relationships table
+  if (upstreamToFocusRows.length > 0) {
+    out.push(`<section><h2>Relationships into ${svgEscape(reportNodeName(seedNode))}</h2>`);
+    out.push(`<p>These point directly at ${svgEscape(reportNodeName(seedNode))}:</p><ul>`);
+    upstreamToFocusRows.forEach((row) =>
+      out.push(`<li>${svgEscape(reportUpstreamSentence(row, seedNode))}</li>`));
+    out.push('</ul>');
+    out.push('<div class="table-wrap"><table><thead><tr>' +
+      '<th class="num">Depth</th><th>Source</th><th>Relationship</th><th>Target</th>' +
+      '<th class="num">Weight</th><th>Strength</th><th>Note</th></tr></thead><tbody>');
+    upstreamToFocusRows.forEach((row) => out.push(reportDetailRowHtml(row, seedIndex)));
+    out.push('</tbody></table></div></section>');
+  }
+
+  // Relationship narrative — grouped by source entity, split into Direct
+  // (depth 1, i.e. the focus entity's own relationships) and Indirect (deeper).
+  out.push('<section><h2>Relationship narrative</h2>');
   if (narrativeGroups.length === 0) {
-    lines.push('- No outward depth-by-depth relationship path was found in this view.');
+    out.push('<p class="muted">No outward depth-by-depth relationship path was found in this view.</p>');
+  } else {
+    const buckets = [
+      ['Direct Relationships', narrativeGroups.filter((group) => group.depth <= 1)],
+      ['Indirect Relationships', narrativeGroups.filter((group) => group.depth >= 2)],
+    ];
+    buckets.forEach(([heading, groups]) => {
+      if (groups.length === 0) return;
+      out.push(`<h3>${heading}</h3>`);
+      // Cluster this bucket's relationship groups under their source entity.
+      const bySource = new Map();
+      groups.forEach((group) => {
+        if (!bySource.has(group.sourceIndex)) bySource.set(group.sourceIndex, []);
+        bySource.get(group.sourceIndex).push(group);
+      });
+      bySource.forEach((sourceGroups, sourceIndex) => {
+        out.push(`<p class="rel-source">${svgEscape(reportSourceHeading(data.nodes[sourceIndex]))}</p>`);
+        out.push('<ul class="rel-list">');
+        sourceGroups.forEach((group) => out.push(reportRelationshipBullet(group)));
+        out.push('</ul>');
+      });
+    });
   }
-  lines.push('');
+  out.push('</section>');
 
-  lines.push('## Relationship detail');
-  edgeRows.forEach((row) => {
-    lines.push(reportEdgeLine(row, seedIndex));
-  });
+  // Full relationship detail table
+  out.push('<section><h2>Relationship detail</h2>');
+  out.push('<div class="table-wrap"><table><thead><tr>' +
+    '<th class="num">Depth</th><th>Source</th><th>Relationship</th><th>Target</th>' +
+    '<th class="num">Weight</th><th>Strength</th><th>Note</th></tr></thead><tbody>');
+  edgeRows.forEach((row) => out.push(reportDetailRowHtml(row, seedIndex)));
+  out.push('</tbody></table></div></section>');
 
-  lines.push('');
-  lines.push('## Graph visualisation');
-  lines.push('');
-  lines.push(buildSubgraphSvg());
+  // Inline diagram — strip the XML prolog so the SVG embeds cleanly in HTML.
+  try {
+    const svg = buildSubgraphSvg().replace(/^<\?xml[^>]*\?>\s*/, '');
+    out.push(`<section><h2>Graph visualisation</h2><div class="diagram">${svg}</div></section>`);
+  } catch (_) {
+    // Diagram is best-effort; omit it rather than fail the whole report.
+  }
 
-  return lines.join('\n');
+  out.push(`<footer>Generated by ${svgEscape(brandName)} Graph Explorer · ${svgEscape(generated)}</footer>`);
+  out.push('</main></body></html>');
+  return out.join('\n');
 }
 
 function downloadRelationshipReport() {
   try {
     const report = buildRelationshipReport();
-    const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
+    const blob = new Blob([report], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `relationship-report-${data._seed_id}-depth-${data._max_depth || 'x'}.md`;
+    a.download = `relationship-report-${data._seed_id}-depth-${data._max_depth || 'x'}.html`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -2485,6 +2727,8 @@ function rememberCurrentView() {
 
 function renderBreadcrumbs(crumbs) {
   bfsBreadcrumb.innerHTML = '';
+  // Only surface the trail bar once there is somewhere to navigate back to.
+  bfsBreadcrumb.style.display = crumbs.length > 1 ? 'flex' : 'none';
   crumbs.forEach((crumb, i) => {
     if (i > 0) {
       const sep = document.createElement('span');

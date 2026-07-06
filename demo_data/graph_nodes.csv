@@ -768,7 +768,7 @@
 1710,Phone #1710,Device,Tempest,0.380,Phone,2023-02-21
 99,Lily Kobayashi,Person,Hydra,0.090,Mule,2023-09-22
 8888,Andre Khan,Person,Onyx,0.680,Launderer,2024-02-24
-3586,Naomi M�ller,Person,Vortex,0.060,Mule,2023-04-26
+3586,Naomi Miller,Person,Vortex,0.060,Mule,2023-04-26
 10295,Yusuf Le,Person,Phoenix,0.020,Victim,2024-02-20
 568,Acct #568,Account,Hydra,0.330,Brokerage,2023-03-14
 772,Atlantic Exports LLC,Business,Hydra,0.460,Shell Company,2024-05-12
@@ -1008,7 +1008,7 @@
 4829,Acct #4829,Account,Cipher,0.350,Brokerage,2023-05-09
 5971,Burner Phone #5971,Device,Mirage,0.380,Burner Phone,2024-01-16
 1077,Takeshi Sato,Person,Tempest,0.120,Mule,2023-02-01
-7174,Helena M�ller,Person,Cobalt,0.790,Launderer,2023-12-08
+7174,Helena Miller,Person,Cobalt,0.790,Launderer,2023-12-08
 2280,Acct #2280,Account,Phoenix,0.200,Foreign,2023-07-05
 3422,Laptop #3422,Device,Specter,0.490,Laptop,2023-08-14
 9662,Aoife Takahashi,Person,Krypton,0.130,Mule,2023-04-04
@@ -1060,7 +1060,7 @@
 7235,Acct #7235,Account,Cobalt,0.320,Savings,2023-08-09
 1872,Marcus Kobayashi,Person,Phoenix,0.180,Mule,2023-08-23
 1138,Finn Bauer,Person,Tempest,0.160,Mule,2024-01-24
-8846,Ravi M�ller,Person,Onyx,0.250,Mule,2023-10-17
+8846,Ravi Miller,Person,Onyx,0.250,Mule,2023-10-17
 1668,Quantum Enterprises LLC,Business,Tempest,0.750,Front Business,2023-02-15
 7908,Tomas Schneider,Person,Orchid,0.140,Mule,2023-08-11
 10661,Mateus Choi,Person,Unaffiliated,0.160,Unaffiliated,2023-03-28
@@ -1206,7 +1206,7 @@
 10375,Amira Choi,Person,Tempest,0.100,Victim,2024-01-12
 7887,Kenji Flores,Person,Orchid,0.180,Mule,2024-01-30
 240,Camila Anderson,Person,Hydra,0.120,Mule,2023-04-17
-2055,Pavel M�ller,Person,Phoenix,0.420,Phishing Operator,2023-11-10
+2055,Pavel Miller,Person,Phoenix,0.420,Phishing Operator,2023-11-10
 8295,Acct #8295,Account,Orchid,0.250,Crypto,2024-04-21
 8356,Acct #8356,Account,Orchid,0.330,Foreign,2024-03-06
 8825,Takeshi Martinez,Person,Onyx,0.200,Mule,2023-04-22
@@ -1280,7 +1280,7 @@
 9151,Acct #9151,Account,Onyx,0.460,Prepaid,2023-01-16
 1912,Dmitri Lindqvist,Person,Phoenix,0.240,Mule,2023-06-01
 6072,Amelia Weber,Person,Tundra,0.070,Mule,2023-07-25
-7744,Jamal M�ller,Person,Orchid,0.200,Mule,2023-12-21
+7744,Jamal Miller,Person,Orchid,0.200,Mule,2023-12-21
 10089,Acct #10089,Account,Krypton,0.470,Checking,2024-05-15
 7948,Zara Reyes,Person,Orchid,0.210,Mule,2023-01-23
 3523,Eli Garcia,Person,Vortex,0.120,Mule,2023-11-14
@@ -1289,7 +1289,7 @@
 2381,Acct #2381,Account,Phoenix,0.300,Prepaid,2023-09-26
 1443,Acct #1443,Account,Tempest,0.300,Crypto,2024-04-12
 5664,Acct #5664,Account,Mirage,0.370,Savings,2023-07-01
-8009,Finn M�ller,Person,Orchid,0.200,Mule,2023-12-04
+8009,Finn Miller,Person,Orchid,0.200,Mule,2023-12-04
 9355,Cascade Partners SA,Business,Onyx,0.540,Front Business,2023-09-05
 8886,Finn Iqbal,Person,Onyx,0.670,Launderer,2023-10-21
 8682,Amelia Cohen,Person,Onyx,0.200,Mule,2023-03-13
@@ -1491,7 +1491,7 @@
 5704,Acct #5704,Account,Mirage,0.320,Prepaid,2023-10-16
 8722,Rohan Weber,Person,Onyx,0.090,Mule,2023-10-20
 9864,Acct #9864,Account,Krypton,0.470,Crypto,2023-05-23
-341,Carlos M�ller,Person,Hydra,0.550,Money Mule Coordinator,2023-09-04
+341,Carlos Miller,Person,Hydra,0.550,Money Mule Coordinator,2023-09-04
 3624,Tomas Olsson,Person,Vortex,0.150,Mule,2024-02-16
 3155,Acct #3155,Account,Specter,0.320,Checking,2023-09-13
 7315,Acct #7315,Account,Cobalt,0.120,Prepaid,2024-01-03
@@ -2060,7 +2060,7 @@
 4356,Pavel Watanabe,Person,Cipher,0.090,Mule,2023-10-18
 665,Acct #665,Account,Hydra,0.150,Savings,2023-02-25
 10596,Klara Hussain,Person,Unaffiliated,0.250,Unaffiliated,2023-08-29
-2745,Sofia M�ller,Person,Specter,0.130,Mule,2023-08-11
+2745,Sofia Miller,Person,Specter,0.130,Mule,2023-08-11
 10392,Klara Rahman,Person,Vortex,0.080,Victim,2023-11-06
 6701,Atlantic Logistics LLC,Business,Tundra,0.420,Shell Company,2024-03-29
 8047,Sophia Novak,Person,Orchid,0.440,Identity Thief,2023-12-23
@@ -2320,7 +2320,7 @@
 10024,Acct #10024,Account,Krypton,0.490,Foreign,2023-01-05
 1704,Laptop #1704,Device,Tempest,0.250,Laptop,2024-01-28
 7006,Noah Flores,Person,Cobalt,0.060,Mule,2024-04-10
-6333,Kamal M�ller,Person,Tundra,0.550,Forger,2023-08-05
+6333,Kamal Miller,Person,Tundra,0.550,Forger,2023-08-05
 7944,Ethan O'Brien,Person,Orchid,0.220,Mule,2023-01-21
 10289,Kavya Lindqvist,Person,Onyx,0.080,Victim,2023-08-23
 4457,Leo Andersson,Person,Cipher,0.120,Mule,2023-02-17
@@ -2475,7 +2475,7 @@
 1683,Phone #1683,Device,Tempest,0.330,Phone,2024-01-02
 5843,Ironside Distribution SA,Business,Mirage,0.480,Shell Company,2023-11-04
 10472,Mei Johansson,Person,Mirage,0.080,Victim,2023-02-28
-1153,Carlos M�ller,Person,Tempest,0.180,Mule,2023-02-23
+1153,Carlos Miller,Person,Tempest,0.180,Mule,2023-02-23
 2152,Acct #2152,Account,Phoenix,0.460,Checking,2024-05-27
 3763,Sarah Le,Person,Vortex,0.410,Crypto Mixer,2023-06-13
 7923,Liam Dubois,Person,Orchid,0.230,Mule,2023-08-14
@@ -2492,7 +2492,7 @@
 72,Ingrid Singh,Person,Hydra,0.210,Mule,2023-08-13
 1214,Acct #1214,Account,Tempest,0.490,Prepaid,2023-11-30
 7454,Acct #7454,Account,Cobalt,0.460,Brokerage,2023-08-10
-4497,Helena M�ller,Person,Cipher,0.160,Mule,2023-03-31
+4497,Helena Miller,Person,Cipher,0.160,Mule,2023-03-31
 8657,Sigrid Nguyen,Person,Onyx,0.070,Mule,2023-03-22
 4701,Acct #4701,Account,Cipher,0.440,Brokerage,2023-11-30
 4905,Acct #4905,Account,Cipher,0.280,Prepaid,2024-01-26
@@ -3065,11 +3065,11 @@
 4964,Meridian Technologies GmbH,Business,Cipher,0.490,Shell Company,2023-12-30
 1946,Ava Schmidt,Person,Phoenix,0.070,Mule,2024-04-13
 4556,Wei Choi,Person,Cipher,0.180,Mule,2023-11-26
-1069,Harper M�ller,Person,Tempest,0.120,Mule,2024-04-11
+1069,Harper Miller,Person,Tempest,0.120,Mule,2024-04-11
 5433,Ava Nilsson,Person,Mirage,0.210,Mule,2023-09-11
 9389,Burner Phone #9389,Device,Onyx,0.410,Burner Phone,2023-10-08
 6901,Sigrid Yang,Person,Cobalt,0.090,Mule,2023-11-27
-7105,Kavya M�ller,Person,Cobalt,0.120,Mule,2024-01-26
+7105,Kavya Miller,Person,Cobalt,0.120,Mule,2024-01-26
 335,Talia Kapoor,Person,Hydra,0.720,Launderer,2023-02-19
 6840,Tablet #6840,Device,Tundra,0.250,Tablet,2023-01-29
 4352,Declan Doyle,Person,Cipher,0.170,Mule,2023-07-05
@@ -3430,7 +3430,7 @@
 1027,Andre Singh,Person,Tempest,0.170,Mule,2023-11-16
 9938,Acct #9938,Account,Krypton,0.350,Checking,2023-08-06
 2964,Acct #2964,Account,Specter,0.380,Prepaid,2024-05-07
-10550,Declan M�ller,Person,Vortex,0.770,Cross-Syndicate Broker,2024-01-27
+10550,Declan Miller,Person,Vortex,0.770,Cross-Syndicate Broker,2024-01-27
 1496,Acct #1496,Account,Tempest,0.140,Foreign,2023-04-11
 7389,Acct #7389,Account,Cobalt,0.160,Savings,2023-05-03
 415,Acct #415,Account,Hydra,0.210,Checking,2023-10-23
@@ -3485,7 +3485,7 @@
 8531,SIM Card #8531,Device,Orchid,0.260,SIM Card,2024-02-06
 8062,Acct #8062,Account,Orchid,0.170,Savings,2023-05-29
 9061,Acct #9061,Account,Onyx,0.460,Brokerage,2024-05-29
-5370,Ekaterina M�ller,Person,Mirage,0.070,Mule,2023-01-07
+5370,Ekaterina Miller,Person,Mirage,0.070,Mule,2023-01-07
 9000,Acct #9000,Account,Onyx,0.390,Crypto,2023-09-21
 5513,Acct #5513,Account,Mirage,0.380,Prepaid,2023-07-06
 945,Mateus Doyle,Person,Tempest,0.220,Mule,2023-05-23
@@ -3616,7 +3616,7 @@
 190,Jack Eriksson,Person,Hydra,0.180,Mule,2023-02-01
 7307,Acct #7307,Account,Cobalt,0.450,Savings,2023-01-23
 8245,Acct #8245,Account,Orchid,0.360,Checking,2023-05-01
-5288,Ingrid M�ller,Person,Mirage,0.090,Mule,2023-06-16
+5288,Ingrid Miller,Person,Mirage,0.090,Mule,2023-06-16
 10182,Phoenix Logistics Corp,Business,Krypton,0.530,Shell Company,2023-05-05
 2209,Acct #2209,Account,Phoenix,0.110,Savings,2024-02-14
 5696,Acct #5696,Account,Mirage,0.330,Prepaid,2023-08-21
@@ -3757,7 +3757,7 @@
 1719,Asher Kobayashi,Person,Phoenix,0.590,Recruiter,2023-04-03
 7286,Acct #7286,Account,Cobalt,0.180,Prepaid,2023-08-14
 8020,James Yamamoto,Person,Orchid,0.670,Launderer,2024-01-07
-2922,Liam M�ller,Person,Specter,0.600,Money Mule Coordinator,2023-11-14
+2922,Liam Miller,Person,Specter,0.600,Money Mule Coordinator,2023-11-14
 2188,Acct #2188,Account,Phoenix,0.280,Savings,2023-01-31
 7755,Akiko Sanchez,Person,Orchid,0.130,Mule,2024-03-20
 5471,Lukas Dubois,Person,Mirage,0.670,Launderer,2023-03-22
@@ -3964,7 +3964,7 @@
 1086,Liam Torres,Person,Tempest,0.080,Mule,2023-10-18
 5246,Khalil Nilsson,Person,Mirage,0.100,Mule,2024-02-28
 7326,Acct #7326,Account,Cobalt,0.230,Brokerage,2023-05-15
-6918,Nina M�ller,Person,Cobalt,0.100,Mule,2023-07-18
+6918,Nina Miller,Person,Cobalt,0.100,Mule,2023-07-18
 5042,Horizon International SA,Business,Cipher,0.680,Shell Company,2023-06-20
 3166,Acct #3166,Account,Specter,0.460,Prepaid,2023-01-18
 4777,Acct #4777,Account,Cipher,0.400,Foreign,2023-05-03
@@ -4167,7 +4167,7 @@
 2798,Harper Volkov,Person,Specter,0.240,Mule,2023-09-25
 2533,Solstice Express Ltd,Business,Phoenix,0.540,Front Business,2024-03-02
 2941,Acct #2941,Account,Specter,0.180,Crypto,2023-08-09
-3614,Amira M�ller,Person,Vortex,0.160,Mule,2023-05-01
+3614,Amira Miller,Person,Vortex,0.160,Mule,2023-05-01
 249,Noah O'Brien,Person,Hydra,0.180,Mule,2023-11-10
 453,Acct #453,Account,Hydra,0.260,Crypto,2023-03-09
 6428,Acct #6428,Account,Tundra,0.170,Savings,2023-10-22
@@ -4181,12 +4181,12 @@
 3206,Acct #3206,Account,Specter,0.120,Crypto,2023-12-23
 3410,Burner Phone #3410,Device,Specter,0.330,Burner Phone,2023-02-28
 10241,Coral Group Corp,Business,Krypton,0.680,Front Business,2023-06-12
-7896,Yara M�ller,Person,Orchid,0.210,Mule,2023-02-26
+7896,Yara Miller,Person,Orchid,0.210,Mule,2023-02-26
 3675,Tomas Mehta,Person,Vortex,0.150,Mule,2023-08-24
 3879,Acct #3879,Account,Vortex,0.480,Brokerage,2023-04-11
 7692,Phone #7692,Device,Cobalt,0.320,Phone,2023-09-18
 718,Nebula Distribution Group,Business,Hydra,0.420,Shell Company,2023-07-02
-1126,Svetlana M�ller,Person,Tempest,0.190,Mule,2024-05-23
+1126,Svetlana Miller,Person,Tempest,0.190,Mule,2024-05-23
 1330,Acct #1330,Account,Tempest,0.160,Brokerage,2024-05-20
 5143,Amira Bergman,Person,Mirage,0.620,Recruiter,2023-07-13
 9303,Meridian Industries GmbH,Business,Onyx,0.470,Shell Company,2024-02-11
@@ -4210,7 +4210,7 @@
 9242,Harbor Enterprises AG,Business,Onyx,0.410,Shell Company,2024-04-24
 983,Pavel Lin,Person,Tempest,0.060,Mule,2024-01-25
 9568,Fatima Rosenberg,Person,Krypton,0.190,Mule,2023-01-10
-3471,Helena M�ller,Person,Vortex,0.220,Mule,2024-01-02
+3471,Helena Miller,Person,Vortex,0.220,Mule,2024-01-02
 10180,Cypress Ventures GmbH,Business,Krypton,0.530,Shell Company,2023-01-11
 8426,Opal Worldwide GmbH,Business,Orchid,0.540,Shell Company,2024-01-28
 1452,Acct #1452,Account,Tempest,0.250,Brokerage,2023-09-29
@@ -4296,7 +4296,7 @@
 5265,Ingrid Patel,Person,Mirage,0.210,Mule,2023-07-29
 4062,Acct #4062,Account,Vortex,0.200,Crypto,2023-02-25
 5408,Takeshi Khan,Person,Mirage,0.060,Mule,2024-03-08
-7141,Marcus M�ller,Person,Cobalt,0.160,Mule,2023-09-28
+7141,Marcus Miller,Person,Cobalt,0.160,Mule,2023-09-28
 2716,Lukas Zhang,Person,Specter,0.230,Mule,2023-04-24
 4531,Daniel Ahmadi,Person,Cipher,0.180,Mule,2024-04-08
 3328,Aurora Consultants LLC,Business,Specter,0.690,Shell Company,2023-11-15
@@ -4572,7 +4572,7 @@
 1206,Klara Tran,Person,Tempest,0.460,Forger,2024-03-19
 2552,SIM Card #2552,Device,Phoenix,0.310,SIM Card,2024-01-10
 4632,Aoife Sato,Person,Cipher,0.440,Identity Thief,2024-02-26
-3551,Charlotte M�ller,Person,Vortex,0.160,Mule,2024-02-09
+3551,Charlotte Miller,Person,Vortex,0.160,Mule,2024-02-09
 9791,Acct #9791,Account,Krypton,0.440,Prepaid,2023-04-24
 472,Acct #472,Account,Hydra,0.480,Prepaid,2023-05-26
 2083,Acct #2083,Account,Phoenix,0.150,Brokerage,2023-10-18
@@ -4712,7 +4712,7 @@
 3265,Harbor Ventures Group,Business,Specter,0.640,Shell Company,2024-01-13
 7364,Acct #7364,Account,Cobalt,0.480,Savings,2023-04-09
 186,Charlotte Choi,Person,Hydra,0.150,Mule,2023-04-21
-6079,Tomas M�ller,Person,Tundra,0.200,Mule,2024-03-08
+6079,Tomas Miller,Person,Tundra,0.200,Mule,2024-03-08
 6283,Jamal Liu,Person,Tundra,0.160,Mule,2023-09-02
 7833,Valentina Hashimoto,Person,Orchid,0.230,Mule,2023-12-26
 9709,Ahmed Ahmadi,Person,Krypton,0.240,Mule,2024-04-17
@@ -5114,7 +5114,7 @@
 5568,Acct #5568,Account,Mirage,0.290,Prepaid,2023-06-22
 9850,Acct #9850,Account,Krypton,0.300,Savings,2023-07-06
 4752,Acct #4752,Account,Cipher,0.240,Prepaid,2023-12-29
-1143,Ezra M�ller,Person,Tempest,0.110,Mule,2023-11-18
+1143,Ezra Miller,Person,Tempest,0.110,Mule,2023-11-18
 1,Akiko Kowalski,Person,Hydra,0.850,Ringleader,2023-10-09
 7301,Acct #7301,Account,Cobalt,0.370,Savings,2023-09-16
 7770,Lily Patel,Person,Orchid,0.060,Mule,2023-07-27
@@ -5435,7 +5435,7 @@
 5179,Ekaterina Flores,Person,Mirage,0.250,Mule,2024-05-30
 285,Priya Mehta,Person,Hydra,0.150,Mule,2024-05-27
 9482,Aisha Le,Person,Krypton,0.180,Mule,2023-10-13
-1835,Yusuf M�ller,Person,Phoenix,0.130,Mule,2023-10-20
+1835,Yusuf Miller,Person,Phoenix,0.130,Mule,2023-10-20
 8197,Acct #8197,Account,Orchid,0.350,Foreign,2023-01-29
 8870,Mia Friedman,Person,Onyx,0.600,Launderer,2023-08-14
 9951,Acct #9951,Account,Krypton,0.230,Savings,2023-12-03
@@ -5834,7 +5834,7 @@
 4199,Phoenix Exports AG,Business,Vortex,0.680,Shell Company,2023-03-26
 8481,Cascade Equity Corp,Business,Orchid,0.680,Front Business,2024-03-19
 365,Acct #365,Account,Hydra,0.110,Crypto,2023-08-01
-8624,Dmitri M�ller,Person,Onyx,0.120,Mule,2023-05-05
+8624,Dmitri Miller,Person,Onyx,0.120,Mule,2023-05-05
 10235,Cobalt Properties SA,Business,Krypton,0.570,Front Business,2023-12-12
 3383,Continental Trading Corp,Business,Specter,0.610,Front Business,2023-07-03
 8950,Acct #8950,Account,Onyx,0.300,Prepaid,2023-12-21
@@ -6149,7 +6149,7 @@
 9520,Maya Choi,Person,Krypton,0.240,Mule,2023-07-03
 10193,Meridian Capital Corp,Business,Krypton,0.620,Front Business,2024-05-21
 9377,Phoenix Holdings Inc,Business,Onyx,0.720,Front Business,2023-01-13
-3545,Hiroshi M�ller,Person,Vortex,0.190,Mule,2024-01-23
+3545,Hiroshi Miller,Person,Vortex,0.190,Mule,2024-01-23
 9989,Acct #9989,Account,Krypton,0.190,Savings,2023-12-30
 3015,Acct #3015,Account,Specter,0.460,Checking,2023-09-10
 6828,Laptop #6828,Device,Tundra,0.420,Laptop,2023-05-08
@@ -6405,7 +6405,7 @@
 9825,Acct #9825,Account,Krypton,0.310,Prepaid,2023-01-16
 1240,Acct #1240,Account,Tempest,0.440,Brokerage,2023-08-27
 9743,Yuki Nilsson,Person,Krypton,0.750,Launderer,2023-05-07
-6929,Sarah M�ller,Person,Cobalt,0.210,Mule,2024-04-28
+6929,Sarah Miller,Person,Cobalt,0.210,Mule,2024-04-28
 10294,Nadia Choi,Person,Cobalt,0.060,Victim,2024-02-28
 7276,Acct #7276,Account,Cobalt,0.170,Brokerage,2023-11-11
 4645,Acct #4645,Account,Cipher,0.170,Prepaid,2023-05-30
@@ -7433,7 +7433,7 @@
 1644,Pioneer Express Ltd,Business,Tempest,0.520,Front Business,2024-01-04
 971,Hannah Murphy,Person,Tempest,0.140,Mule,2023-06-23
 8067,Acct #8067,Account,Orchid,0.500,Foreign,2024-05-24
-6925,Pooja M�ller,Person,Cobalt,0.100,Mule,2023-05-23
+6925,Pooja Miller,Person,Cobalt,0.100,Mule,2023-05-23
 5131,Laptop #5131,Device,Cipher,0.260,Laptop,2024-01-03
 3989,Acct #3989,Account,Vortex,0.110,Foreign,2023-12-07
 5518,Acct #5518,Account,Mirage,0.270,Prepaid,2023-12-21
@@ -7715,7 +7715,7 @@
 3335,Sterling Holdings SA,Business,Specter,0.430,Shell Company,2023-10-03
 1459,Acct #1459,Account,Tempest,0.360,Savings,2023-04-08
 7169,Sarah Sanchez,Person,Cobalt,0.700,Launderer,2023-02-11
-8780,Sophia M�ller,Person,Onyx,0.210,Mule,2023-06-08
+8780,Sophia Miller,Person,Onyx,0.210,Mule,2023-06-08
 3804,Acct #3804,Account,Vortex,0.340,Checking,2023-12-16
 7495,Acct #7495,Account,Cobalt,0.490,Foreign,2023-10-22
 7638,Harbor Logistics Ltd,Business,Cobalt,0.710,Front Business,2024-01-27
@@ -7909,7 +7909,7 @@
 10431,Ethan O'Brien,Person,Krypton,0.080,Victim,2023-05-28
 9962,Acct #9962,Account,Krypton,0.350,Foreign,2023-06-30
 2702,Wei Khan,Person,Specter,0.070,Mule,2024-02-03
-8677,Sergei M�ller,Person,Onyx,0.250,Mule,2024-05-19
+8677,Sergei Miller,Person,Onyx,0.250,Mule,2024-05-19
 3253,Ironside Express Co,Business,Specter,0.500,Shell Company,2023-12-06
 7413,Acct #7413,Account,Cobalt,0.240,Checking,2023-06-26
 153,Finn Martinez,Person,Hydra,0.170,Mule,2023-12-27
@@ -8287,7 +8287,7 @@
 5739,Acct #5739,Account,Mirage,0.460,Checking,2023-05-13
 5943,Cobalt Realty Inc,Business,Mirage,0.550,Front Business,2023-10-30
 6759,Quartz Industries Ltd,Business,Tundra,0.490,Shell Company,2023-01-02
-10450,Lukas M�ller,Person,Onyx,0.050,Victim,2023-11-14
+10450,Lukas Miller,Person,Onyx,0.050,Victim,2023-11-14
 3190,Acct #3190,Account,Specter,0.460,Savings,2023-03-14
 3394,Opal Holdings Co,Business,Specter,0.550,Front Business,2023-08-27
 4210,Summit Holdings Group,Business,Vortex,0.570,Front Business,2023-05-16
@@ -8412,7 +8412,7 @@
 2170,Acct #2170,Account,Phoenix,0.460,Checking,2023-09-08
 5066,Verdant Technologies Inc,Business,Cipher,0.520,Front Business,2023-04-29
 8757,Khalil O'Brien,Person,Onyx,0.200,Mule,2023-02-14
-1966,Cheng M�ller,Person,Phoenix,0.060,Mule,2024-01-22
+1966,Cheng Miller,Person,Phoenix,0.060,Mule,2024-01-22
 8206,Acct #8206,Account,Orchid,0.310,Crypto,2024-01-24
 9022,Acct #9022,Account,Onyx,0.120,Brokerage,2023-07-01
 9226,Acct #9226,Account,Onyx,0.170,Prepaid,2023-05-20
@@ -8715,7 +8715,7 @@
 10040,Acct #10040,Account,Krypton,0.140,Foreign,2024-01-02
 9102,Acct #9102,Account,Onyx,0.320,Prepaid,2024-01-22
 7981,Yuki Akhtar,Person,Orchid,0.110,Mule,2023-01-20
-10326,Helena M�ller,Person,Vortex,0.150,Victim,2023-08-20
+10326,Helena Miller,Person,Vortex,0.150,Victim,2023-08-20
 7960,James Cohen,Person,Orchid,0.210,Mule,2024-01-29
 986,Zara Lindberg,Person,Tempest,0.070,Mule,2024-04-07
 334,Kavya Romano,Person,Hydra,0.610,Launderer,2023-03-10
@@ -8736,7 +8736,7 @@
 2393,Echo Equity AG,Business,Phoenix,0.500,Shell Company,2024-05-29
 8246,Acct #8246,Account,Orchid,0.390,Prepaid,2023-10-05
 3148,Acct #3148,Account,Specter,0.230,Savings,2023-12-05
-1720,Arjun M�ller,Person,Phoenix,0.660,Recruiter,2023-04-09
+1720,Arjun Miller,Person,Phoenix,0.660,Recruiter,2023-04-09
 8429,Sequoia Partners GmbH,Business,Orchid,0.590,Shell Company,2023-05-23
 5697,Acct #5697,Account,Mirage,0.320,Brokerage,2023-03-27
 10122,Frontier Consultants AG,Business,Krypton,0.670,Shell Company,2024-05-05
@@ -8838,7 +8838,7 @@
 721,Meridian Logistics Inc,Business,Hydra,0.600,Shell Company,2024-05-19
 2311,Acct #2311,Account,Phoenix,0.440,Crypto,2023-03-02
 1842,Astrid Novak,Person,Phoenix,0.140,Mule,2024-06-01
-6961,Aisha M�ller,Person,Cobalt,0.100,Mule,2024-04-19
+6961,Aisha Miller,Person,Cobalt,0.100,Mule,2024-04-19
 3739,Mateus Friedman,Person,Vortex,0.710,Launderer,2024-05-29
 5329,Amelia Chen,Person,Mirage,0.240,Mule,2023-07-04
 7878,Natasha Ryan,Person,Orchid,0.150,Mule,2023-11-07
@@ -9087,7 +9087,7 @@
 3085,Acct #3085,Account,Specter,0.280,Foreign,2023-01-24
 9325,Pinnacle Distribution AG,Business,Onyx,0.490,Shell Company,2023-12-30
 6858,Beatriz Eriksson,Person,Cobalt,0.610,Recruiter,2023-01-25
-1760,Nina M�ller,Person,Phoenix,0.230,Mule,2023-12-22
+1760,Nina Miller,Person,Phoenix,0.230,Mule,2023-12-22
 536,Acct #536,Account,Hydra,0.330,Foreign,2023-04-13
 7245,Acct #7245,Account,Cobalt,0.270,Brokerage,2023-03-02
 1291,Acct #1291,Account,Tempest,0.250,Foreign,2023-08-04
@@ -9139,7 +9139,7 @@
 4084,Acct #4084,Account,Vortex,0.230,Savings,2024-03-18
 10324,Erik Flores,Person,Phoenix,0.130,Victim,2023-09-09
 2290,Acct #2290,Account,Phoenix,0.110,Foreign,2023-03-15
-8795,Svetlana M�ller,Person,Onyx,0.240,Mule,2024-02-04
+8795,Svetlana Miller,Person,Onyx,0.240,Mule,2024-02-04
 1535,Horizon Capital Group,Business,Tempest,0.540,Shell Company,2023-04-07
 7775,Leo Larsson,Person,Orchid,0.230,Mule,2024-04-17
 5777,Acct #5777,Account,Mirage,0.190,Savings,2023-05-04
@@ -9160,7 +9160,7 @@
 9651,Mei Patel,Person,Krypton,0.080,Mule,2023-08-10
 2086,Acct #2086,Account,Phoenix,0.380,Savings,2024-02-15
 4635,Sarah Volkov,Person,Cipher,0.420,Hacker,2024-04-03
-10385,Talia M�ller,Person,Cobalt,0.090,Victim,2023-06-27
+10385,Talia Miller,Person,Cobalt,0.090,Victim,2023-06-27
 10589,Eli Park,Person,Unaffiliated,0.220,Unaffiliated,2023-07-31
 6,Zara Yamamoto,Person,Hydra,0.690,Lieutenant,2023-12-11
 4900,Acct #4900,Account,Cipher,0.420,Prepaid,2023-04-23
@@ -9262,7 +9262,7 @@
 8978,Acct #8978,Account,Onyx,0.300,Savings,2024-03-16
 1453,Acct #1453,Account,Tempest,0.110,Crypto,2024-04-26
 5144,Wei Torres,Person,Mirage,0.680,Recruiter,2023-07-12
-4553,Larissa M�ller,Person,Cipher,0.160,Mule,2024-02-12
+4553,Larissa Miller,Person,Cipher,0.160,Mule,2024-02-12
 6429,Acct #6429,Account,Tundra,0.120,Crypto,2023-01-27
 8427,Pinnacle Wholesale LLC,Business,Orchid,0.450,Shell Company,2023-08-01
 3064,Acct #3064,Account,Specter,0.410,Crypto,2023-08-16
@@ -9295,7 +9295,7 @@
 7081,Arjun Hussain,Person,Cobalt,0.170,Mule,2023-01-05
 780,Ironside Realty Group,Business,Hydra,0.710,Front Business,2024-02-27
 8774,Naomi O'Connor,Person,Onyx,0.160,Mule,2023-01-04
-7163,Ingrid M�ller,Person,Cobalt,0.680,Launderer,2023-10-16
+7163,Ingrid Miller,Person,Cobalt,0.680,Launderer,2023-10-16
 4532,Ahmed Huang,Person,Cipher,0.230,Mule,2023-11-24
 1249,Acct #1249,Account,Tempest,0.350,Crypto,2024-01-16
 1596,Maple Ventures Ltd,Business,Tempest,0.550,Shell Company,2023-01-25
@@ -10030,7 +10030,7 @@
 9281,Granite Distribution LLC,Business,Onyx,0.590,Shell Company,2023-09-21
 2021,Lin Kelly,Person,Phoenix,0.730,Launderer,2024-02-17
 10341,Ekaterina Ali,Person,Cipher,0.100,Victim,2023-05-30
-9546,Ravi M�ller,Person,Krypton,0.140,Mule,2023-03-21
+9546,Ravi Miller,Person,Krypton,0.140,Mule,2023-03-21
 6732,Ironside Realty Co,Business,Tundra,0.410,Shell Company,2023-02-23
 5508,Acct #5508,Account,Mirage,0.490,Prepaid,2023-08-08
 2225,Acct #2225,Account,Phoenix,0.360,Foreign,2024-04-22
@@ -10320,7 +10320,7 @@
 7485,Acct #7485,Account,Cobalt,0.130,Foreign,2023-11-26
 10116,Horizon Equity AG,Business,Krypton,0.500,Shell Company,2024-02-05
 1062,Ravi Rosenberg,Person,Tempest,0.090,Mule,2023-06-30
-8015,Mia M�ller,Person,Orchid,0.770,Launderer,2023-06-20
+8015,Mia Miller,Person,Orchid,0.770,Launderer,2023-06-20
 4936,Acct #4936,Account,Cipher,0.170,Brokerage,2023-02-16
 7567,Verdant Industries Co,Business,Cobalt,0.680,Shell Company,2023-05-23
 2000,Xia Kowalski,Person,Phoenix,0.120,Mule,2024-03-05
@@ -10413,7 +10413,7 @@
 1184,Finn Olsson,Person,Tempest,0.720,Launderer,2023-05-22
 7220,Acct #7220,Account,Cobalt,0.480,Foreign,2023-10-07
 694,Cypress Equity AG,Business,Hydra,0.650,Shell Company,2023-04-09
-898,Helena M�ller,Person,Tempest,0.100,Mule,2024-05-18
+898,Helena Miller,Person,Tempest,0.100,Mule,2024-05-18
 4202,Solstice Consultants Co,Business,Vortex,0.680,Front Business,2024-01-13
 1653,Crown Partners Co,Business,Tempest,0.600,Front Business,2023-10-20
 1163,Zara Iyer,Person,Tempest,0.690,Launderer,2023-03-07
@@ -10439,7 +10439,7 @@
 1428,Acct #1428,Account,Tempest,0.280,Prepaid,2023-06-05
 8810,Layla Lin,Person,Onyx,0.240,Mule,2023-05-08
 980,Mia Petrov,Person,Tempest,0.090,Mule,2023-04-21
-7954,Larissa M�ller,Person,Orchid,0.070,Mule,2023-06-27
+7954,Larissa Miller,Person,Orchid,0.070,Mule,2023-06-27
 7464,Acct #7464,Account,Cobalt,0.480,Savings,2024-03-29
 3712,Henry Iyer,Person,Vortex,0.120,Mule,2023-09-14
 7016,Sakura Rossi,Person,Cobalt,0.050,Mule,2023-12-20
@@ -10632,7 +10632,7 @@
 7994,Lily Hashimoto,Person,Orchid,0.140,Mule,2023-08-08
 6383,Acct #6383,Account,Tundra,0.420,Savings,2023-09-27
 5445,Nadia Nilsson,Person,Mirage,0.660,Launderer,2024-04-05
-6852,Sergei M�ller,Person,Cobalt,0.680,Lieutenant,2023-07-28
+6852,Sergei Miller,Person,Cobalt,0.680,Lieutenant,2023-07-28
 816,Phoenix Consultants Ltd,Business,Hydra,0.690,Front Business,2023-07-27
 1285,Acct #1285,Account,Tempest,0.250,Brokerage,2023-03-25
 8259,Acct #8259,Account,Orchid,0.160,Foreign,2024-03-21
