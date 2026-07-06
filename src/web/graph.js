@@ -3256,6 +3256,53 @@ document.getElementById('btn-svg-export').onclick = downloadSubgraphSvg;
 const reportButton = document.getElementById('btn-report-export');
 if (reportButton) reportButton.onclick = downloadRelationshipReport;
 
+// ---- Validation SQL pane ---- //
+// Which edges the SQL covers: narrow to an active selection, else the whole view.
+function currentSqlScope() {
+  const rowsFrom = (linkIdxs) => [...linkIdxs].map((i) => ({
+    sourceIndex: idIndex.get(data.links[i].source),
+    targetIndex: idIndex.get(data.links[i].target),
+  }));
+  if (state.trace && state.trace.edges.size)
+    return { rows: rowsFrom(state.trace.edges), label: 'ancestor trace' };
+  if (state.pairPick.length === 2 && state.pairEdges.size)
+    return { rows: rowsFrom(state.pairEdges), label: 'selected pair' };
+  if (state.focusedEdge != null)
+    return { rows: rowsFrom([state.focusedEdge]), label: 'focused relationship' };
+  if (state.focused != null)
+    return { rows: rowsFrom(incidentOf.get(state.focused) || new Set()),
+             label: `relationships of ${data.nodes[state.focused].label || 'node'}` };
+  return { rows: data.links.map((e) => ({
+    sourceIndex: idIndex.get(e.source), targetIndex: idIndex.get(e.target),
+  })), label: `current view · ${data.links.length} edge${data.links.length === 1 ? '' : 's'}` };
+}
+
+const sqlPane = document.getElementById('sql-pane');
+function showSqlPane() {
+  const { rows, label } = currentSqlScope();
+  const sql = reportValidationSql(rows) || '-- No relationships in the current selection.';
+  sqlPane.querySelector('#sql-pane-code code').textContent = sql;
+  document.getElementById('sql-pane-scope').textContent = `Scope: ${label}`;
+  sqlPane.style.display = 'flex';
+}
+document.getElementById('btn-sql-view').onclick = showSqlPane;
+document.getElementById('btn-sql-close').onclick = () => { sqlPane.style.display = 'none'; };
+document.getElementById('btn-sql-copy').onclick = async () => {
+  const codeEl = sqlPane.querySelector('#sql-pane-code code');
+  try {
+    await navigator.clipboard.writeText(codeEl.textContent);
+    showGraphToast('SQL copied to clipboard');
+  } catch (_) {
+    // Clipboard API can be blocked (file://); select the text for manual copy.
+    const range = document.createRange();
+    range.selectNodeContents(codeEl);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    showGraphToast('Press Ctrl+C to copy');
+  }
+};
+
 // Submit on Enter in the legacy seed input, if a template still provides one.
 if (bfsSeedInput !== searchInput) {
   bfsSeedInput.addEventListener('keydown', (ev) => {

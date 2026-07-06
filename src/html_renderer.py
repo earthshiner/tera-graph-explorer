@@ -106,6 +106,18 @@ __BRAND_STYLE__
   <div id="legend-rows"></div>
 </div>
 
+<div id="sql-pane" style="display: none;">
+  <div id="sql-pane-head">
+    <strong>Validation SQL</strong>
+    <span id="sql-pane-scope"></span>
+    <span id="sql-pane-actions">
+      <button id="btn-sql-copy" type="button">Copy</button>
+      <button id="btn-sql-close" type="button">Close</button>
+    </span>
+  </div>
+  <pre id="sql-pane-code"><code></code></pre>
+</div>
+
 <aside id="controls">
 
   <section>
@@ -143,6 +155,9 @@ __BRAND_STYLE__
     <div class="btn-row">
       <button id="btn-svg-export">Download SVG</button>
       <button id="btn-report-export">Download Report</button>
+    </div>
+    <div class="btn-row">
+      <button id="btn-sql-view">View SQL</button>
     </div>
     <div id="bfs-error"></div>
   </section>
