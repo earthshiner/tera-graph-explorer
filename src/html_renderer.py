@@ -130,6 +130,12 @@ __BRAND_STYLE__
       <div class="field-head"><label for="search-input">Entity</label></div>
       <input id="search-input" type="text" placeholder="Customer, account, transaction, merchant..." autocomplete="off">
     </div>
+    <div class="field entity-find-field">
+      <div class="field-head"><label for="edge-search-input">Relationship</label></div>
+      <input id="edge-search-input" type="text" placeholder="Type, name, strength, or weight (e.g. launders, &gt;0.7)" autocomplete="off">
+    </div>
+    <div id="edge-search-results"></div>
+    <div id="edge-search-status"></div>
     <div class="field">
       <div class="field-head"><label for="bfs-depth">Relationship depth</label>
                               <span class="val" id="v-bfs-depth">2</span></div>

@@ -170,6 +170,7 @@ const state = {
   edges:   { curved: true, arrows: false, widthScale: 1.0, opacity: 1.0 },
   layout:  { mode: 'original' },
   search:  { query: '', matches: new Set(), remote: [] },
+  edgeSearch: { query: '', matches: new Set(), remote: [] },   // edge search: matching link indices + whole-DB results
   focused:     null,                            // selected point index, or null
   pinnedLabel: null,                            // node index whose label is always visible
   hovered:     null,                            // hovered point index (transient)
@@ -385,6 +386,16 @@ function edgeHighlight() {
     const e = data.links[state.hoveredEdge];
     return { edges: new Set([state.hoveredEdge]),
              nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
+  }
+  if (state.edgeSearch.matches.size) {
+    // Edge search: highlight matching edges and their endpoints.
+    const nodes = new Set();
+    state.edgeSearch.matches.forEach((i) => {
+      const e = data.links[i];
+      nodes.add(idIndex.get(e.source));
+      nodes.add(idIndex.get(e.target));
+    });
+    return { edges: state.edgeSearch.matches, nodes };
   }
   if (state.trace) {
     // Ancestor trace: highlight the in-view chain nodes and connecting edges.
@@ -1195,6 +1206,7 @@ const initialConfig = {
     }
     clearPairPick();
     clearTrace();
+    clearEdgeSearch();
     if (state.focusedEdge != null) state.focusedEdge = null;
     setFocused(index ?? null);
   },
@@ -2009,6 +2021,7 @@ function runSearch(query) {
     return;
   }
 
+  clearEdgeSearch();          // node and edge search are mutually exclusive
   const matches = [];
   data.nodes.forEach((n, i) => {
     const labelOk = !q || (n.label && n.label.toLowerCase().includes(q));
@@ -2124,6 +2137,136 @@ searchInput.addEventListener('keydown', (ev) => {
     }
   });
 });
+
+// ---- edge (relationship) search ---- //
+// Matches on edge type, endpoint labels, strength band, or a weight predicate
+// (">0.7", ">=0.5", "<0.3", or a bare number treated as >=). Highlights matches
+// in the current view; if none, falls back to a whole-database lookup.
+const edgeSearchInput   = document.getElementById('edge-search-input');
+const edgeSearchResults = document.getElementById('edge-search-results');
+const edgeSearchStatus  = document.getElementById('edge-search-status');
+
+function parseWeightQuery(q) {
+  const m = q.match(/^([<>]=?|=)?\s*(\d*\.?\d+)$/);
+  if (!m) return null;
+  const op = m[1] || '>=';
+  const val = parseFloat(m[2]);
+  if (!Number.isFinite(val)) return null;
+  return (w) => {
+    if (op === '>')  return w > val;
+    if (op === '>=') return w >= val;
+    if (op === '<')  return w < val;
+    if (op === '<=') return w <= val;
+    if (op === '=')  return Math.abs(w - val) < 1e-9;
+    return w >= val;
+  };
+}
+
+function edgeMatchesQuery(link, q, weightPred) {
+  if ((link.type || '').toLowerCase().includes(q)) return true;
+  if ((link.strength || '').toLowerCase().includes(q)) return true;
+  const s = data.nodes[idIndex.get(link.source)];
+  const t = data.nodes[idIndex.get(link.target)];
+  if (s && (s.label || '').toLowerCase().includes(q)) return true;
+  if (t && (t.label || '').toLowerCase().includes(q)) return true;
+  if (weightPred && weightPred(link.weight || 0)) return true;
+  return false;
+}
+
+function rebuildAllHighlights() {
+  rebuildPointColors();
+  rebuildLinkColors();
+  rebuildLinkWidths();
+}
+
+function clearEdgeSearch() {
+  state.edgeSearch = { query: '', matches: new Set(), remote: [] };
+  if (edgeSearchInput && edgeSearchInput.value) edgeSearchInput.value = '';
+  if (edgeSearchResults) edgeSearchResults.innerHTML = '';
+  if (edgeSearchStatus) edgeSearchStatus.textContent = '';
+}
+
+let edgeSearchRemoteTimer = null;
+function runEdgeSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  state.edgeSearch.query = q;
+  state.edgeSearch.remote = [];
+  if (edgeSearchResults) edgeSearchResults.innerHTML = '';
+  if (edgeSearchRemoteTimer) { clearTimeout(edgeSearchRemoteTimer); edgeSearchRemoteTimer = null; }
+  if (!q) {
+    state.edgeSearch.matches = new Set();
+    if (edgeSearchStatus) edgeSearchStatus.textContent = '';
+    rebuildAllHighlights();
+    return;
+  }
+  // Edge search owns the highlight — clear conflicting node/pair/trace selections.
+  clearSearch();
+  clearPairPick();
+  clearTrace();
+  state.focusedEdge = null;
+
+  const weightPred = parseWeightQuery(q);
+  const matches = new Set();
+  data.links.forEach((e, i) => { if (edgeMatchesQuery(e, q, weightPred)) matches.add(i); });
+  state.edgeSearch.matches = matches;
+  rebuildAllHighlights();
+
+  if (matches.size > 0) {
+    edgeSearchStatus.textContent =
+      `${matches.size} relationship${matches.size === 1 ? '' : 's'} highlighted in view`;
+    return;
+  }
+  edgeSearchStatus.textContent = 'No matches in view — searching database…';
+  edgeSearchRemoteTimer = setTimeout(() => queryEdgeSearchRemote(q), 250);
+}
+
+async function queryEdgeSearchRemote(q) {
+  if (window.location.protocol === 'file:') {
+    edgeSearchStatus.textContent = 'No matches in view. Database search needs the running server.';
+    return;
+  }
+  try {
+    const resp = await fetch('/api/edge-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit: 12 }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const payload = await resp.json();
+    renderEdgeSearchRemote(payload.edges || []);
+  } catch (_) {
+    edgeSearchStatus.textContent = 'No matches in view, and database search is unavailable.';
+  }
+}
+
+function renderEdgeSearchRemote(edges) {
+  state.edgeSearch.remote = edges;
+  if (!edges.length) {
+    edgeSearchStatus.textContent = 'No matching relationships found.';
+    return;
+  }
+  edgeSearchStatus.textContent =
+    `${edges.length} database match${edges.length === 1 ? '' : 'es'} (not in view) — open one:`;
+  edgeSearchResults.innerHTML = '';
+  edges.forEach((ed) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'search-result';
+    btn.textContent = `${ed.source_label} —${ed.edge_type}→ ${ed.target_label}`;
+    btn.onclick = () => {
+      const depth = getBfsDepth();
+      navigateTo(ed.source_id, depth, { label: `${ed.source_label} depth ${depth}` });
+    };
+    edgeSearchResults.appendChild(btn);
+  });
+}
+
+if (edgeSearchInput) {
+  edgeSearchInput.addEventListener('input', (ev) => runEdgeSearch(ev.target.value));
+  edgeSearchInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { clearEdgeSearch(); rebuildAllHighlights(); }
+  });
+}
 searchAttributeSelects.forEach(({ el }) => {
   el.addEventListener('change', () => runSearch(searchInput.value));
   el.addEventListener('keydown', (ev) => {

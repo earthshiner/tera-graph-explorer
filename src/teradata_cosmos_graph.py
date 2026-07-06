@@ -55,6 +55,7 @@ from graph_data import (
     fetch_full_graph,
     qualify_table,
     resolve_seed_label,
+    search_edges,
     search_nodes,
 )
 from html_renderer import render_html, render_html_str
@@ -289,7 +290,8 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
             self.wfile.write(body)
 
         def do_POST(self):
-            if self.path not in ("/api/bfs", "/api/search", "/api/ancestors"):
+            if self.path not in ("/api/bfs", "/api/search", "/api/ancestors",
+                                  "/api/edge-search"):
                 self.send_json_error(404, "Endpoint not found")
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -299,6 +301,18 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                 self.send_json_error(400, "Bad JSON")
                 return
             try:
+                if self.path == "/api/edge-search":
+                    query = payload.get("query", "")
+                    if not str(query).strip():
+                        self.send_json({"edges": []})
+                        return
+                    with query_lock:
+                        edges = run_teradata(lambda active_conn: search_edges(
+                            active_conn, database, query, payload.get("limit", 12),
+                        ))
+                    self.send_json({"edges": edges})
+                    return
+
                 if self.path == "/api/ancestors":
                     if "node_id" not in payload:
                         self.send_json_error(400, "Need node_id")
