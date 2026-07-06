@@ -175,6 +175,9 @@ const state = {
   hovered:     null,                            // hovered point index (transient)
   focusedEdge: null,                            // selected edge (link) index, or null
   hoveredEdge: null,                            // hovered edge index (transient)
+  pairPick:    [],                              // up to 2 node indices (shift-click) to highlight the edges between
+  pairEdges:   new Set(),                       // link indices connecting the picked pair
+  trace:       null,                            // ancestor trace: { nodes:Set, edges:Set } of the in-view chain, or null
   labels:  { nodes: false, edges: false },
 };
 
@@ -372,12 +375,214 @@ function highlightKey() {
   return state.hovered != null ? state.hovered : state.focused;
 }
 
-// ---- edge highlight key: which edge (if any) is the focal one ---- //
-// Hover beats click, same precedence as nodes. When set, the rebuild
-// functions take an "edge-focused" path: only this single edge stays
-// orange, only its two endpoint nodes stay coloured.
-function edgeHighlightKey() {
-  return state.hoveredEdge != null ? state.hoveredEdge : state.focusedEdge;
+// ---- edge highlight: which edges (if any) are the focal set ---- //
+// Returns { edges: Set<linkIndex>|null, nodes: Set<nodeIndex>|null }. When
+// non-null, the rebuild functions take an "edge-focused" path: only these
+// edges stay accented, only their endpoint nodes stay coloured. Precedence:
+// hovered edge (transient) > two-node pair pick > clicked edge.
+function edgeHighlight() {
+  if (state.hoveredEdge != null) {
+    const e = data.links[state.hoveredEdge];
+    return { edges: new Set([state.hoveredEdge]),
+             nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
+  }
+  if (state.trace) {
+    // Ancestor trace: highlight the in-view chain nodes and connecting edges.
+    return { edges: state.trace.edges, nodes: state.trace.nodes };
+  }
+  if (state.pairPick.length >= 1) {
+    // One picked so far: highlight just that node (dim the rest) as a "pick the
+    // second" cue. Two picked: highlight the edges connecting them.
+    return { edges: state.pairPick.length === 2 ? state.pairEdges : new Set(),
+             nodes: new Set(state.pairPick) };
+  }
+  if (state.focusedEdge != null) {
+    const e = data.links[state.focusedEdge];
+    return { edges: new Set([state.focusedEdge]),
+             nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
+  }
+  return { edges: null, nodes: null };
+}
+
+// Recompute which links connect the currently picked pair (either direction).
+function computePairEdges() {
+  state.pairEdges = new Set();
+  if (state.pairPick.length !== 2) return;
+  const idA = data.nodes[state.pairPick[0]].id;
+  const idB = data.nodes[state.pairPick[1]].id;
+  data.links.forEach((e, i) => {
+    if ((e.source === idA && e.target === idB) || (e.source === idB && e.target === idA)) {
+      state.pairEdges.add(i);
+    }
+  });
+}
+
+// Shift-click a node to build the pair. Re-clicking a picked node removes it;
+// a third pick drops the oldest. Clears node/edge focus so pair highlight owns
+// the view. Returns the connecting-edge count once two are picked (else null).
+function togglePairPick(index) {
+  if (index == null) return null;
+  const at = state.pairPick.indexOf(index);
+  if (at !== -1) state.pairPick.splice(at, 1);
+  else { state.pairPick.push(index); if (state.pairPick.length > 2) state.pairPick.shift(); }
+  state.focusedEdge = null;
+  state.focused = null;
+  safeSetFocusedPoint(null);
+  computePairEdges();
+  rebuildPointColors();
+  rebuildLinkColors();
+  rebuildLinkWidths();
+  return state.pairPick.length === 2 ? state.pairEdges.size : null;
+}
+
+function clearPairPick() {
+  if (state.pairPick.length === 0) return;
+  state.pairPick = [];
+  state.pairEdges = new Set();
+}
+
+// Small transient message centred over the graph (e.g. pair-pick feedback).
+let graphToastEl = null;
+let graphToastTimer = null;
+function showGraphToast(message) {
+  if (!graphToastEl) {
+    graphToastEl = document.createElement('div');
+    graphToastEl.style.cssText =
+      'position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;' +
+      'pointer-events:none;background:rgba(15,23,42,.88);color:#e2e8f0;padding:7px 14px;' +
+      'border-radius:6px;font:13px/1.4 Inter,-apple-system,sans-serif;max-width:80%;' +
+      'box-shadow:0 2px 10px rgba(0,0,0,.35);opacity:0;transition:opacity .15s;';
+    div.appendChild(graphToastEl);
+  }
+  graphToastEl.textContent = message;
+  graphToastEl.style.opacity = '1';
+  if (graphToastTimer) clearTimeout(graphToastTimer);
+  graphToastTimer = setTimeout(() => { if (graphToastEl) graphToastEl.style.opacity = '0'; }, 2600);
+}
+
+// ---- ancestor trace ("search to the ultimate parent") ---- //
+const PARENT_EDGE_TYPES = ['recruited', 'controls', 'employs'];
+
+function clearTrace() {
+  if (!state.trace) return;
+  state.trace = null;
+  if (ancestorPanelEl) ancestorPanelEl.style.display = 'none';
+}
+
+// Ask the server to walk upward from a node to its ultimate parent(s), then
+// highlight the in-view chain and show the path. Needs serve mode (live DB).
+async function traceToUltimateParent(index) {
+  const node = data.nodes[index];
+  if (!node) return;
+  showGraphToast('Tracing to ultimate parent…');
+  let result;
+  try {
+    const resp = await fetch('/api/ancestors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: node.id, types: PARENT_EDGE_TYPES }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    result = await resp.json();
+  } catch (_) {
+    showGraphToast('Ultimate-parent tracing needs the live server (serve mode).');
+    return;
+  }
+  applyAncestorTrace(result);
+}
+
+function applyAncestorTrace(result) {
+  const chain = result.chain || [];
+  const nodes = new Set();
+  const edges = new Set();
+  chain.forEach((c) => {
+    const idx = idIndex.get(c.node_id);
+    if (idx != null) nodes.add(idx);
+  });
+  // Connecting edges present in the view: each step is parent(node_id) -> child(child_id).
+  chain.forEach((c) => {
+    if (c.child_id == null) return;
+    data.links.forEach((e, i) => {
+      if (e.source === c.node_id && e.target === c.child_id) edges.add(i);
+    });
+  });
+  clearPairPick();
+  state.focusedEdge = null;
+  state.trace = { nodes, edges };
+  rebuildPointColors();
+  rebuildLinkColors();
+  rebuildLinkWidths();
+  renderAncestorPanel(result);
+}
+
+let ancestorPanelEl = null;
+function renderAncestorPanel(result) {
+  const chain = result.chain || [];
+  const roots = result.roots || [];
+  if (!ancestorPanelEl) {
+    ancestorPanelEl = document.createElement('div');
+    ancestorPanelEl.style.cssText =
+      'position:absolute;top:14px;left:14px;z-index:7;max-width:320px;' +
+      'background:rgba(15,23,42,.94);color:#e2e8f0;border:1px solid rgba(148,163,184,.35);' +
+      'border-radius:8px;padding:12px 14px;font:13px/1.5 Inter,-apple-system,sans-serif;' +
+      'box-shadow:0 4px 18px rgba(0,0,0,.4);';
+    div.appendChild(ancestorPanelEl);
+  }
+  ancestorPanelEl.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+  const h = document.createElement('strong');
+  h.textContent = 'Ultimate parent';
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.style.cssText = 'background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:0 2px;';
+  close.onclick = () => { clearTrace(); setFocused(null); };
+  head.append(h, close);
+  ancestorPanelEl.appendChild(head);
+
+  const rootNames = roots.map((r) => r.label + (r.role ? ` (${r.role})` : '')).join(', ');
+  const rootLine = document.createElement('div');
+  rootLine.style.cssText = 'margin-bottom:8px;';
+  rootLine.innerHTML = roots.length
+    ? `<span style="color:#7dd3fc;font-weight:700">${svgEscape(rootNames)}</span>` +
+      `<span style="color:#94a3b8"> · ${chain.length - 1} level${chain.length - 1 === 1 ? '' : 's'} up</span>`
+    : '<span style="color:#94a3b8">No parent found — this node is a root.</span>';
+  ancestorPanelEl.appendChild(rootLine);
+
+  // The chain, shallowest (picked node) to deepest (root).
+  const list = document.createElement('div');
+  list.style.cssText = 'border-top:1px solid rgba(148,163,184,.25);padding-top:8px;color:#cbd5e1;';
+  chain.forEach((c) => {
+    const row = document.createElement('div');
+    const indent = '&nbsp;'.repeat(c.level * 2);
+    const via = c.via_type ? `<span style="color:#64748b"> ·via ${svgEscape(c.via_type)}</span>` : '';
+    const isRoot = roots.some((r) => r.node_id === c.node_id);
+    const name = `<span style="${isRoot ? 'color:#7dd3fc;font-weight:700' : ''}">${svgEscape(c.label || ('#' + c.node_id))}</span>`;
+    const role = c.role ? `<span style="color:#94a3b8"> ${svgEscape(c.role)}</span>` : '';
+    row.innerHTML = `${indent}${c.level > 0 ? '↑ ' : ''}${name}${role}${via}`;
+    list.appendChild(row);
+  });
+  ancestorPanelEl.appendChild(list);
+
+  if (result.truncated) {
+    const note = document.createElement('div');
+    note.style.cssText = 'margin-top:6px;color:#f59e0b;font-size:12px;';
+    note.textContent = 'Walk stopped at the depth cap; a deeper parent may exist.';
+    ancestorPanelEl.appendChild(note);
+  }
+
+  if (roots.length) {
+    const open = document.createElement('button');
+    open.textContent = `Open ${roots[0].label} in graph`;
+    open.style.cssText = 'margin-top:10px;width:100%;padding:6px 10px;border:none;border-radius:6px;' +
+      'background:#2563eb;color:#fff;cursor:pointer;font:inherit;';
+    open.onclick = () => navigateTo(roots[0].node_id, data._max_depth || 2,
+      { label: (roots[0].label || 'Ultimate parent') + ' downline' });
+    ancestorPanelEl.appendChild(open);
+  }
+
+  ancestorPanelEl.style.display = 'block';
 }
 
 // ---- render trigger ---- //
@@ -408,13 +613,8 @@ function rebuildPointColors() {
   const hi = highlightKey();
   const keep = hi != null ? new Set([hi, ...neighborOf.get(hi)]) : null;
 
-  // Edge focus: keep only the two endpoint nodes
-  const ek = edgeHighlightKey();
-  let edgeKeep = null;
-  if (ek != null) {
-    const e = data.links[ek];
-    edgeKeep = new Set([idIndex.get(e.source), idIndex.get(e.target)]);
-  }
+  // Edge focus: keep only the highlighted edges' endpoint nodes
+  const edgeKeep = edgeHighlight().nodes;
 
   data.nodes.forEach((n, i) => {
     const [r, g, b] = hexToRgb(cmap[n[state.nodes.colorBy]] || '#888888');
@@ -463,9 +663,9 @@ function rebuildPointColors() {
 }
 
 function rebuildLinkColors() {
-  const ek = edgeHighlightKey();
+  const ekSet = edgeHighlight().edges;
   const hi = highlightKey();
-  const incident = (ek == null && hi != null) ? incidentOf.get(hi) : null;
+  const incident = (ekSet == null && hi != null) ? incidentOf.get(hi) : null;
   const directionLevels = edgeDirectionLevels();
 
   data.links.forEach((e, i) => {
@@ -476,9 +676,9 @@ function rebuildLinkColors() {
       alpha = Math.max(alpha, 0.72);
     }
 
-    if (ek != null) {
-      // Edge focus: only the focal edge stays directional/accented, all others nearly black
-      if (i === ek) {
+    if (ekSet != null) {
+      // Edge focus: only the highlighted edges stay accented, all others nearly black
+      if (ekSet.has(i)) {
         const accentRgb = edgeAccentRgb(i, directionLevels);
         r = accentRgb[0]; g = accentRgb[1]; b = accentRgb[2];
         alpha = 1.0;
@@ -512,13 +712,13 @@ function rebuildLinkWidths() {
   // linkWidthScale config (see applyLinkWidthScale). This buffer holds
   // base widths plus focus-thickening (1.7× on incident edges, 2.5× on
   // a single edge-focused link).
-  const ek = edgeHighlightKey();
+  const ekSet = edgeHighlight().edges;
   const hi = highlightKey();
-  const incident = (ek == null && hi != null) ? incidentOf.get(hi) : null;
+  const incident = (ekSet == null && hi != null) ? incidentOf.get(hi) : null;
   data.links.forEach((e, i) => {
     let w = 0.8 + (e.weight || 0.5) * 2.2;
-    if (ek != null) {
-      if (i === ek) w *= 2.5;                                   // emphasise focal edge
+    if (ekSet != null) {
+      if (ekSet.has(i)) w *= 2.5;                               // emphasise focal edge(s)
     } else if (incident && incident.has(i)) {
       w *= 1.7;                                                 // thicken incident
     }
@@ -544,10 +744,15 @@ function applySimulationParams() {
 }
 function applyRenderParams() {
   const nativeArrows = isCanvasRenderer && state.edges.arrows;
+  // When the WebGL arrow overlay is active it draws each edge itself (curve +
+  // arrowhead). Cosmos must NOT also render its own link, or the two curves
+  // bow differently and a single directed edge looks bidirectional.
+  const overlayArrows = !isCanvasRenderer && state.edges.arrows;
   graph.setConfig({
     curvedLinks: state.edges.curved,
     linkArrows: nativeArrows,
     renderLinkArrows: nativeArrows,
+    renderLinks: !overlayArrows,
   });
   syncArrowOverlay();
 }
@@ -766,7 +971,7 @@ class CanvasFallbackGraph {
 
   onClick(ev) {
     const i = this.pickPoint(ev);
-    if (this.config.onClick) this.config.onClick(i);
+    if (this.config.onClick) this.config.onClick(i, undefined, ev);
   }
 
   onDoubleClick(ev) {
@@ -973,11 +1178,24 @@ const initialConfig = {
       rebuildLinkWidths();
     }
   },
-  onClick: (index) => {
+  onClick: (index, positionOrEvent, maybeEvent) => {
+    const ev = browserEventFromArgs(positionOrEvent, maybeEvent);
     hideNodeContextMenu();
-    if (state.focusedEdge != null) {
-      state.focusedEdge = null;
+    // Shift-click builds a two-node pick and highlights the edge(s) between them.
+    if (ev && ev.shiftKey && index != null) {
+      const connecting = togglePairPick(index);
+      if (connecting != null) {
+        showGraphToast(connecting > 0
+          ? `${connecting} edge${connecting === 1 ? '' : 's'} highlighted between the two nodes`
+          : 'No direct edge between the two nodes');
+      } else if (state.pairPick.length === 1) {
+        showGraphToast('Shift-click another node to highlight the connection');
+      }
+      return;
     }
+    clearPairPick();
+    clearTrace();
+    if (state.focusedEdge != null) state.focusedEdge = null;
     setFocused(index ?? null);
   },
   onPointDoubleClick: (index, positionOrEvent, maybeEvent) => {
@@ -1453,6 +1671,10 @@ function showNodeContextMenu(index, x, y) {
     drillIntoNode(index, nodeKey, nodeValue, edgeKey, edgeValue);
   }));
 
+  nodeContextMenu.appendChild(contextMenuButton('Trace to ultimate parent', () => {
+    traceToUltimateParent(index);
+  }));
+
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
   nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
   nodeContextMenu.style.display = 'block';
@@ -1462,7 +1684,14 @@ addEventListener('click', (ev) => {
   if (!nodeContextMenu.contains(ev.target)) hideNodeContextMenu();
 });
 addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape') hideNodeContextMenu();
+  if (ev.key === 'Escape') {
+    hideNodeContextMenu();
+    if (state.pairPick.length > 0 || state.trace) {
+      clearPairPick();
+      clearTrace();
+      setFocused(null);
+    }
+  }
 });
 let paused = !isCanvasRenderer;
 const btnPause = document.getElementById('btn-pause');
@@ -2465,6 +2694,60 @@ function reportRelationshipBullet(group) {
   return `<li>${svgEscape(head)}<ul class="rel-targets">${items.join('')}</ul></li>`;
 }
 
+// Build a Teradata query that lets an analyst manually validate every
+// relationship in the report. Each traversed edge becomes one (source_id,
+// target_id) predicate; joining graph_edges back to graph_nodes confirms the
+// edge exists and resolves both node labels. Returns null if there is nothing
+// to validate. REPORT_SQL_MAX_PAIRS bounds the generated SQL for large views.
+const REPORT_SQL_MAX_PAIRS = 500;
+function reportValidationSql(edgeRows) {
+  const edgeTable = data._database ? `${data._database}.graph_edges` : 'graph_edges';
+  const nodeTable = data._database ? `${data._database}.graph_nodes` : 'graph_nodes';
+
+  const seen = new Set();
+  const pairs = [];
+  for (const row of edgeRows) {
+    const sourceId = Number(data.nodes[row.sourceIndex]?.id);
+    const targetId = Number(data.nodes[row.targetIndex]?.id);
+    if (!Number.isFinite(sourceId) || !Number.isFinite(targetId)) continue;
+    const key = `${sourceId}|${targetId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pairs.push([sourceId, targetId]);
+  }
+  if (pairs.length === 0) return null;
+
+  const truncated = pairs.length > REPORT_SQL_MAX_PAIRS;
+  const shown = truncated ? pairs.slice(0, REPORT_SQL_MAX_PAIRS) : pairs;
+  const predicates = shown
+    .map(([s, t], i) => `${i === 0 ? 'WHERE   ' : '   OR   '}(e.source_id = ${s} AND e.target_id = ${t})`)
+    .join('\n');
+
+  const note = truncated
+    ? `-- NOTE: showing the first ${REPORT_SQL_MAX_PAIRS} of ${pairs.length} relationships.\n`
+    : '';
+
+  return (
+    `${note}` +
+    `/* Validation query: confirms every relationship in this report actually\n` +
+    `   exists in ${edgeTable}. Each predicate below is one edge from the report;\n` +
+    `   the joins verify it and resolve the node labels for eyeballing. */\n` +
+    `SELECT  e.edge_id,\n` +
+    `        e.source_id,\n` +
+    `        s.node_label   AS source_label,\n` +
+    `        e.edge_type,\n` +
+    `        e.target_id,\n` +
+    `        t.node_label   AS target_label,\n` +
+    `        e.edge_weight,\n` +
+    `        e.strength\n` +
+    `FROM        ${edgeTable} AS e\n` +
+    `INNER JOIN  ${nodeTable} AS s ON s.node_id = e.source_id\n` +
+    `INNER JOIN  ${nodeTable} AS t ON t.node_id = e.target_id\n` +
+    `${predicates}\n` +
+    `ORDER BY    source_label, target_label;`
+  );
+}
+
 function reportStyleSheet() {
   const accent = BRAND_ACCENT;
   return `
@@ -2500,6 +2783,12 @@ function reportStyleSheet() {
     .rel-list { margin: 0 0 14px; }
     .rel-list > li { margin: 3px 0; }
     .rel-targets { list-style: circle; margin: 3px 0 6px; }
+    pre.sql { background: #0f172a; color: #e2e8f0; border-radius: 8px;
+              padding: 16px 18px; overflow-x: auto; font-size: 12.5px;
+              line-height: 1.5; white-space: pre; }
+    pre.sql code { font: inherit; }
+    code { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
     .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
     th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line);
@@ -2650,6 +2939,17 @@ function buildRelationshipReport() {
     '<th class="num">Weight</th><th>Strength</th><th>Note</th></tr></thead><tbody>');
   edgeRows.forEach((row) => out.push(reportDetailRowHtml(row, seedIndex)));
   out.push('</tbody></table></div></section>');
+
+  // Validation SQL — lets the reader confirm every relationship against the
+  // source database by hand.
+  const validationSql = reportValidationSql(edgeRows);
+  if (validationSql) {
+    out.push('<section><h2>Validation SQL</h2>');
+    out.push(`<p>Run this against <code>${svgEscape(database)}</code> to verify every relationship above directly from ` +
+      '<code>graph_edges</code> / <code>graph_nodes</code>:</p>');
+    out.push(`<pre class="sql"><code>${svgEscape(validationSql)}</code></pre>`);
+    out.push('</section>');
+  }
 
   // Inline diagram — strip the XML prolog so the SVG embeds cleanly in HTML.
   try {
