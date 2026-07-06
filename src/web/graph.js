@@ -177,6 +177,7 @@ const state = {
   hoveredEdge: null,                            // hovered edge index (transient)
   pairPick:    [],                              // up to 2 node indices (shift-click) to highlight the edges between
   pairEdges:   new Set(),                       // link indices connecting the picked pair
+  trace:       null,                            // ancestor trace: { nodes:Set, edges:Set } of the in-view chain, or null
   labels:  { nodes: false, edges: false },
 };
 
@@ -385,6 +386,10 @@ function edgeHighlight() {
     return { edges: new Set([state.hoveredEdge]),
              nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
   }
+  if (state.trace) {
+    // Ancestor trace: highlight the in-view chain nodes and connecting edges.
+    return { edges: state.trace.edges, nodes: state.trace.nodes };
+  }
   if (state.pairPick.length >= 1) {
     // One picked so far: highlight just that node (dim the rest) as a "pick the
     // second" cue. Two picked: highlight the edges connecting them.
@@ -453,6 +458,131 @@ function showGraphToast(message) {
   graphToastEl.style.opacity = '1';
   if (graphToastTimer) clearTimeout(graphToastTimer);
   graphToastTimer = setTimeout(() => { if (graphToastEl) graphToastEl.style.opacity = '0'; }, 2600);
+}
+
+// ---- ancestor trace ("search to the ultimate parent") ---- //
+const PARENT_EDGE_TYPES = ['recruited', 'controls', 'employs'];
+
+function clearTrace() {
+  if (!state.trace) return;
+  state.trace = null;
+  if (ancestorPanelEl) ancestorPanelEl.style.display = 'none';
+}
+
+// Ask the server to walk upward from a node to its ultimate parent(s), then
+// highlight the in-view chain and show the path. Needs serve mode (live DB).
+async function traceToUltimateParent(index) {
+  const node = data.nodes[index];
+  if (!node) return;
+  showGraphToast('Tracing to ultimate parent…');
+  let result;
+  try {
+    const resp = await fetch('/api/ancestors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: node.id, types: PARENT_EDGE_TYPES }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    result = await resp.json();
+  } catch (_) {
+    showGraphToast('Ultimate-parent tracing needs the live server (serve mode).');
+    return;
+  }
+  applyAncestorTrace(result);
+}
+
+function applyAncestorTrace(result) {
+  const chain = result.chain || [];
+  const nodes = new Set();
+  const edges = new Set();
+  chain.forEach((c) => {
+    const idx = idIndex.get(c.node_id);
+    if (idx != null) nodes.add(idx);
+  });
+  // Connecting edges present in the view: each step is parent(node_id) -> child(child_id).
+  chain.forEach((c) => {
+    if (c.child_id == null) return;
+    data.links.forEach((e, i) => {
+      if (e.source === c.node_id && e.target === c.child_id) edges.add(i);
+    });
+  });
+  clearPairPick();
+  state.focusedEdge = null;
+  state.trace = { nodes, edges };
+  rebuildPointColors();
+  rebuildLinkColors();
+  rebuildLinkWidths();
+  renderAncestorPanel(result);
+}
+
+let ancestorPanelEl = null;
+function renderAncestorPanel(result) {
+  const chain = result.chain || [];
+  const roots = result.roots || [];
+  if (!ancestorPanelEl) {
+    ancestorPanelEl = document.createElement('div');
+    ancestorPanelEl.style.cssText =
+      'position:absolute;top:14px;left:14px;z-index:7;max-width:320px;' +
+      'background:rgba(15,23,42,.94);color:#e2e8f0;border:1px solid rgba(148,163,184,.35);' +
+      'border-radius:8px;padding:12px 14px;font:13px/1.5 Inter,-apple-system,sans-serif;' +
+      'box-shadow:0 4px 18px rgba(0,0,0,.4);';
+    div.appendChild(ancestorPanelEl);
+  }
+  ancestorPanelEl.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+  const h = document.createElement('strong');
+  h.textContent = 'Ultimate parent';
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.style.cssText = 'background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer;line-height:1;padding:0 2px;';
+  close.onclick = () => { clearTrace(); setFocused(null); };
+  head.append(h, close);
+  ancestorPanelEl.appendChild(head);
+
+  const rootNames = roots.map((r) => r.label + (r.role ? ` (${r.role})` : '')).join(', ');
+  const rootLine = document.createElement('div');
+  rootLine.style.cssText = 'margin-bottom:8px;';
+  rootLine.innerHTML = roots.length
+    ? `<span style="color:#7dd3fc;font-weight:700">${svgEscape(rootNames)}</span>` +
+      `<span style="color:#94a3b8"> · ${chain.length - 1} level${chain.length - 1 === 1 ? '' : 's'} up</span>`
+    : '<span style="color:#94a3b8">No parent found — this node is a root.</span>';
+  ancestorPanelEl.appendChild(rootLine);
+
+  // The chain, shallowest (picked node) to deepest (root).
+  const list = document.createElement('div');
+  list.style.cssText = 'border-top:1px solid rgba(148,163,184,.25);padding-top:8px;color:#cbd5e1;';
+  chain.forEach((c) => {
+    const row = document.createElement('div');
+    const indent = '&nbsp;'.repeat(c.level * 2);
+    const via = c.via_type ? `<span style="color:#64748b"> ·via ${svgEscape(c.via_type)}</span>` : '';
+    const isRoot = roots.some((r) => r.node_id === c.node_id);
+    const name = `<span style="${isRoot ? 'color:#7dd3fc;font-weight:700' : ''}">${svgEscape(c.label || ('#' + c.node_id))}</span>`;
+    const role = c.role ? `<span style="color:#94a3b8"> ${svgEscape(c.role)}</span>` : '';
+    row.innerHTML = `${indent}${c.level > 0 ? '↑ ' : ''}${name}${role}${via}`;
+    list.appendChild(row);
+  });
+  ancestorPanelEl.appendChild(list);
+
+  if (result.truncated) {
+    const note = document.createElement('div');
+    note.style.cssText = 'margin-top:6px;color:#f59e0b;font-size:12px;';
+    note.textContent = 'Walk stopped at the depth cap; a deeper parent may exist.';
+    ancestorPanelEl.appendChild(note);
+  }
+
+  if (roots.length) {
+    const open = document.createElement('button');
+    open.textContent = `Open ${roots[0].label} in graph`;
+    open.style.cssText = 'margin-top:10px;width:100%;padding:6px 10px;border:none;border-radius:6px;' +
+      'background:#2563eb;color:#fff;cursor:pointer;font:inherit;';
+    open.onclick = () => navigateTo(roots[0].node_id, data._max_depth || 2,
+      { label: (roots[0].label || 'Ultimate parent') + ' downline' });
+    ancestorPanelEl.appendChild(open);
+  }
+
+  ancestorPanelEl.style.display = 'block';
 }
 
 // ---- render trigger ---- //
@@ -1064,6 +1194,7 @@ const initialConfig = {
       return;
     }
     clearPairPick();
+    clearTrace();
     if (state.focusedEdge != null) state.focusedEdge = null;
     setFocused(index ?? null);
   },
@@ -1540,6 +1671,10 @@ function showNodeContextMenu(index, x, y) {
     drillIntoNode(index, nodeKey, nodeValue, edgeKey, edgeValue);
   }));
 
+  nodeContextMenu.appendChild(contextMenuButton('Trace to ultimate parent', () => {
+    traceToUltimateParent(index);
+  }));
+
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
   nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
   nodeContextMenu.style.display = 'block';
@@ -1551,8 +1686,9 @@ addEventListener('click', (ev) => {
 addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
     hideNodeContextMenu();
-    if (state.pairPick.length > 0) {
+    if (state.pairPick.length > 0 || state.trace) {
       clearPairPick();
+      clearTrace();
       setFocused(null);
     }
   }
