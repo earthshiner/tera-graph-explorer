@@ -544,10 +544,15 @@ function applySimulationParams() {
 }
 function applyRenderParams() {
   const nativeArrows = isCanvasRenderer && state.edges.arrows;
+  // When the WebGL arrow overlay is active it draws each edge itself (curve +
+  // arrowhead). Cosmos must NOT also render its own link, or the two curves
+  // bow differently and a single directed edge looks bidirectional.
+  const overlayArrows = !isCanvasRenderer && state.edges.arrows;
   graph.setConfig({
     curvedLinks: state.edges.curved,
     linkArrows: nativeArrows,
     renderLinkArrows: nativeArrows,
+    renderLinks: !overlayArrows,
   });
   syncArrowOverlay();
 }
