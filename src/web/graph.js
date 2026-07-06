@@ -175,6 +175,8 @@ const state = {
   hovered:     null,                            // hovered point index (transient)
   focusedEdge: null,                            // selected edge (link) index, or null
   hoveredEdge: null,                            // hovered edge index (transient)
+  pairPick:    [],                              // up to 2 node indices (shift-click) to highlight the edges between
+  pairEdges:   new Set(),                       // link indices connecting the picked pair
   labels:  { nodes: false, edges: false },
 };
 
@@ -372,12 +374,85 @@ function highlightKey() {
   return state.hovered != null ? state.hovered : state.focused;
 }
 
-// ---- edge highlight key: which edge (if any) is the focal one ---- //
-// Hover beats click, same precedence as nodes. When set, the rebuild
-// functions take an "edge-focused" path: only this single edge stays
-// orange, only its two endpoint nodes stay coloured.
-function edgeHighlightKey() {
-  return state.hoveredEdge != null ? state.hoveredEdge : state.focusedEdge;
+// ---- edge highlight: which edges (if any) are the focal set ---- //
+// Returns { edges: Set<linkIndex>|null, nodes: Set<nodeIndex>|null }. When
+// non-null, the rebuild functions take an "edge-focused" path: only these
+// edges stay accented, only their endpoint nodes stay coloured. Precedence:
+// hovered edge (transient) > two-node pair pick > clicked edge.
+function edgeHighlight() {
+  if (state.hoveredEdge != null) {
+    const e = data.links[state.hoveredEdge];
+    return { edges: new Set([state.hoveredEdge]),
+             nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
+  }
+  if (state.pairPick.length >= 1) {
+    // One picked so far: highlight just that node (dim the rest) as a "pick the
+    // second" cue. Two picked: highlight the edges connecting them.
+    return { edges: state.pairPick.length === 2 ? state.pairEdges : new Set(),
+             nodes: new Set(state.pairPick) };
+  }
+  if (state.focusedEdge != null) {
+    const e = data.links[state.focusedEdge];
+    return { edges: new Set([state.focusedEdge]),
+             nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
+  }
+  return { edges: null, nodes: null };
+}
+
+// Recompute which links connect the currently picked pair (either direction).
+function computePairEdges() {
+  state.pairEdges = new Set();
+  if (state.pairPick.length !== 2) return;
+  const idA = data.nodes[state.pairPick[0]].id;
+  const idB = data.nodes[state.pairPick[1]].id;
+  data.links.forEach((e, i) => {
+    if ((e.source === idA && e.target === idB) || (e.source === idB && e.target === idA)) {
+      state.pairEdges.add(i);
+    }
+  });
+}
+
+// Shift-click a node to build the pair. Re-clicking a picked node removes it;
+// a third pick drops the oldest. Clears node/edge focus so pair highlight owns
+// the view. Returns the connecting-edge count once two are picked (else null).
+function togglePairPick(index) {
+  if (index == null) return null;
+  const at = state.pairPick.indexOf(index);
+  if (at !== -1) state.pairPick.splice(at, 1);
+  else { state.pairPick.push(index); if (state.pairPick.length > 2) state.pairPick.shift(); }
+  state.focusedEdge = null;
+  state.focused = null;
+  safeSetFocusedPoint(null);
+  computePairEdges();
+  rebuildPointColors();
+  rebuildLinkColors();
+  rebuildLinkWidths();
+  return state.pairPick.length === 2 ? state.pairEdges.size : null;
+}
+
+function clearPairPick() {
+  if (state.pairPick.length === 0) return;
+  state.pairPick = [];
+  state.pairEdges = new Set();
+}
+
+// Small transient message centred over the graph (e.g. pair-pick feedback).
+let graphToastEl = null;
+let graphToastTimer = null;
+function showGraphToast(message) {
+  if (!graphToastEl) {
+    graphToastEl = document.createElement('div');
+    graphToastEl.style.cssText =
+      'position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;' +
+      'pointer-events:none;background:rgba(15,23,42,.88);color:#e2e8f0;padding:7px 14px;' +
+      'border-radius:6px;font:13px/1.4 Inter,-apple-system,sans-serif;max-width:80%;' +
+      'box-shadow:0 2px 10px rgba(0,0,0,.35);opacity:0;transition:opacity .15s;';
+    div.appendChild(graphToastEl);
+  }
+  graphToastEl.textContent = message;
+  graphToastEl.style.opacity = '1';
+  if (graphToastTimer) clearTimeout(graphToastTimer);
+  graphToastTimer = setTimeout(() => { if (graphToastEl) graphToastEl.style.opacity = '0'; }, 2600);
 }
 
 // ---- render trigger ---- //
@@ -408,13 +483,8 @@ function rebuildPointColors() {
   const hi = highlightKey();
   const keep = hi != null ? new Set([hi, ...neighborOf.get(hi)]) : null;
 
-  // Edge focus: keep only the two endpoint nodes
-  const ek = edgeHighlightKey();
-  let edgeKeep = null;
-  if (ek != null) {
-    const e = data.links[ek];
-    edgeKeep = new Set([idIndex.get(e.source), idIndex.get(e.target)]);
-  }
+  // Edge focus: keep only the highlighted edges' endpoint nodes
+  const edgeKeep = edgeHighlight().nodes;
 
   data.nodes.forEach((n, i) => {
     const [r, g, b] = hexToRgb(cmap[n[state.nodes.colorBy]] || '#888888');
@@ -463,9 +533,9 @@ function rebuildPointColors() {
 }
 
 function rebuildLinkColors() {
-  const ek = edgeHighlightKey();
+  const ekSet = edgeHighlight().edges;
   const hi = highlightKey();
-  const incident = (ek == null && hi != null) ? incidentOf.get(hi) : null;
+  const incident = (ekSet == null && hi != null) ? incidentOf.get(hi) : null;
   const directionLevels = edgeDirectionLevels();
 
   data.links.forEach((e, i) => {
@@ -476,9 +546,9 @@ function rebuildLinkColors() {
       alpha = Math.max(alpha, 0.72);
     }
 
-    if (ek != null) {
-      // Edge focus: only the focal edge stays directional/accented, all others nearly black
-      if (i === ek) {
+    if (ekSet != null) {
+      // Edge focus: only the highlighted edges stay accented, all others nearly black
+      if (ekSet.has(i)) {
         const accentRgb = edgeAccentRgb(i, directionLevels);
         r = accentRgb[0]; g = accentRgb[1]; b = accentRgb[2];
         alpha = 1.0;
@@ -512,13 +582,13 @@ function rebuildLinkWidths() {
   // linkWidthScale config (see applyLinkWidthScale). This buffer holds
   // base widths plus focus-thickening (1.7× on incident edges, 2.5× on
   // a single edge-focused link).
-  const ek = edgeHighlightKey();
+  const ekSet = edgeHighlight().edges;
   const hi = highlightKey();
-  const incident = (ek == null && hi != null) ? incidentOf.get(hi) : null;
+  const incident = (ekSet == null && hi != null) ? incidentOf.get(hi) : null;
   data.links.forEach((e, i) => {
     let w = 0.8 + (e.weight || 0.5) * 2.2;
-    if (ek != null) {
-      if (i === ek) w *= 2.5;                                   // emphasise focal edge
+    if (ekSet != null) {
+      if (ekSet.has(i)) w *= 2.5;                               // emphasise focal edge(s)
     } else if (incident && incident.has(i)) {
       w *= 1.7;                                                 // thicken incident
     }
@@ -771,7 +841,7 @@ class CanvasFallbackGraph {
 
   onClick(ev) {
     const i = this.pickPoint(ev);
-    if (this.config.onClick) this.config.onClick(i);
+    if (this.config.onClick) this.config.onClick(i, undefined, ev);
   }
 
   onDoubleClick(ev) {
@@ -978,11 +1048,23 @@ const initialConfig = {
       rebuildLinkWidths();
     }
   },
-  onClick: (index) => {
+  onClick: (index, positionOrEvent, maybeEvent) => {
+    const ev = browserEventFromArgs(positionOrEvent, maybeEvent);
     hideNodeContextMenu();
-    if (state.focusedEdge != null) {
-      state.focusedEdge = null;
+    // Shift-click builds a two-node pick and highlights the edge(s) between them.
+    if (ev && ev.shiftKey && index != null) {
+      const connecting = togglePairPick(index);
+      if (connecting != null) {
+        showGraphToast(connecting > 0
+          ? `${connecting} edge${connecting === 1 ? '' : 's'} highlighted between the two nodes`
+          : 'No direct edge between the two nodes');
+      } else if (state.pairPick.length === 1) {
+        showGraphToast('Shift-click another node to highlight the connection');
+      }
+      return;
     }
+    clearPairPick();
+    if (state.focusedEdge != null) state.focusedEdge = null;
     setFocused(index ?? null);
   },
   onPointDoubleClick: (index, positionOrEvent, maybeEvent) => {
@@ -1467,7 +1549,13 @@ addEventListener('click', (ev) => {
   if (!nodeContextMenu.contains(ev.target)) hideNodeContextMenu();
 });
 addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape') hideNodeContextMenu();
+  if (ev.key === 'Escape') {
+    hideNodeContextMenu();
+    if (state.pairPick.length > 0) {
+      clearPairPick();
+      setFocused(null);
+    }
+  }
 });
 let paused = !isCanvasRenderer;
 const btnPause = document.getElementById('btn-pause');
