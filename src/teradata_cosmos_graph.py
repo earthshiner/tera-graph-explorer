@@ -68,10 +68,12 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     """Run a small HTTP server. GET / serves the visualisation HTML
     (with optional ?seed_id=&max_depth= query params for a BFS subgraph),
     and POST /api/bfs resolves a seed label to a node_id."""
+    import html as html_lib
     import http.server
     import socketserver
     import threading
     import urllib.parse
+    import uuid
 
     print(f"→ Connecting to {host} as {user} ({logmech}); database={database}…")
     conn = teradatasql.connect(host=host, user=user, password=password,
@@ -82,6 +84,39 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     cache: dict = {}
     query_lock = threading.Lock()
     CACHE_LIMIT = 4
+
+    def is_connection_failure(exc: Exception) -> bool:
+        message = str(exc).lower()
+        indicators = (
+            "failure sending start request",
+            "forcibly closed",
+            "connection reset",
+            "broken pipe",
+            "socket",
+            "networkio",
+            "not connected",
+        )
+        return any(indicator in message for indicator in indicators)
+
+    def reconnect() -> None:
+        nonlocal conn
+        try:
+            conn.close()
+        except Exception:
+            pass
+        print("  reconnecting to Teradata after connection failure...")
+        conn = teradatasql.connect(host=host, user=user, password=password,
+                                   logmech=logmech)
+
+    def run_teradata(operation):
+        try:
+            return operation(conn)
+        except Exception as exc:
+            if not is_connection_failure(exc):
+                raise
+            print(f"  Teradata connection failed: {exc}")
+            reconnect()
+            return operation(conn)
 
     def html_for(seed_id, max_depth: int, full: bool = False,
                  filter_key=None, filter_value=None,
@@ -101,14 +136,14 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                     f"node_filter={filter_key}:{filter_value}, "
                     f"edge_filter={edge_filter_key}:{edge_filter_value}…"
                 )
-                data = fetch_bfs_subgraph(
-                    conn, database, seed_id, max_depth,
+                data = run_teradata(lambda active_conn: fetch_bfs_subgraph(
+                    active_conn, database, seed_id, max_depth,
                     filter_key, filter_value, edge_filter_key, edge_filter_value
-                )
+                ))
                 print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
             elif full:
                 print(f"  fetching full graph…")
-                data = fetch_full_graph(conn, database)
+                data = run_teradata(lambda active_conn: fetch_full_graph(active_conn, database))
                 print(f"    -> {len(data['nodes'])} nodes, {len(data['links'])} edges")
             else:
                 # Empty landing page — no query, no data, just the controls panel.
@@ -124,6 +159,70 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             print("  [http]", fmt % args)
+
+        def send_safe_html_error(self, status: int, title: str, summary: str,
+                                 action: str, request_id: str) -> None:
+            brand_name = html_lib.escape(str(brand.get("name", "Teradata")))
+            safe_title = html_lib.escape(title)
+            safe_summary = html_lib.escape(summary)
+            safe_action = html_lib.escape(action)
+            safe_request_id = html_lib.escape(request_id)
+            safe_path = html_lib.escape(self.path[:180])
+            body = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{safe_title} · Business Graph Discovery</title>
+<style>
+  body {{ margin: 0; background: #1f1f1f; color: #f5f5f5; font-family: Inter, Arial, sans-serif; }}
+  main {{ max-width: 720px; margin: 10vh auto; padding: 28px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: #2b2b2b; }}
+  h1 {{ margin: 0 0 10px; font-size: 24px; }}
+  p {{ color: #d7d7d7; line-height: 1.5; }}
+  dl {{ display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; margin: 22px 0; }}
+  dt {{ color: #a9a9a9; font-weight: 700; }}
+  dd {{ margin: 0; word-break: break-word; }}
+  .tag {{ color: #ff5f02; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; }}
+  .action {{ border-top: 1px solid rgba(255,255,255,.14); margin-top: 20px; padding-top: 16px; }}
+</style>
+</head>
+<body>
+<main>
+  <div class="tag">{brand_name}</div>
+  <h1>{safe_title}</h1>
+  <p>{safe_summary}</p>
+  <dl>
+    <dt>Status</dt><dd>{status}</dd>
+    <dt>Request id</dt><dd>{safe_request_id}</dd>
+    <dt>Request</dt><dd>{safe_path}</dd>
+  </dl>
+  <p class="action"><strong>What to do:</strong> {safe_action}</p>
+</main>
+</body>
+</html>""".encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def send_error(self, code, message=None, explain=None):
+            if code >= 500:
+                request_id = uuid.uuid4().hex[:10]
+                print(
+                    f"  [http] request_id={request_id} sanitised {code}: "
+                    f"{message or explain or 'server error'}"
+                )
+                self.send_safe_html_error(
+                    code,
+                    "Data service temporarily unavailable",
+                    "Business Graph Discovery could not complete this request. The detailed diagnostic has been logged on the server and is not shown in the browser.",
+                    "Retry the request. If it keeps failing, quote the request id to the demo operator and check the Teradata session, network path, and database availability.",
+                    request_id,
+                )
+                return
+            super().send_error(code, message, explain)
 
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
@@ -150,7 +249,15 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                         edge_filter_value=edge_filter_value,
                     ).encode("utf-8")
                 except Exception as e:
-                    self.send_error(500, f"Query failed: {e}")
+                    request_id = uuid.uuid4().hex[:10]
+                    print(f"  [http] request_id={request_id} query failed: {e}")
+                    self.send_safe_html_error(
+                        500,
+                        "Data service temporarily unavailable",
+                        "Business Graph Discovery could not load this relationship view. The detailed diagnostic has been logged on the server and is not shown in the browser.",
+                        "Retry the request. If it keeps failing, quote the request id to the demo operator and check the Teradata session, network path, and database availability.",
+                        request_id,
+                    )
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -196,11 +303,11 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                         self.send_json({"nodes": []})
                         return
                     with query_lock:
-                        nodes = search_nodes(
-                            conn, database, query, payload.get("limit", 8),
+                        nodes = run_teradata(lambda active_conn: search_nodes(
+                            active_conn, database, query, payload.get("limit", 8),
                             payload.get("importance_min"),
                             payload.get("importance_max"),
-                        )
+                        ))
                     self.send_json({"nodes": nodes})
                     return
 
@@ -208,7 +315,11 @@ def serve(host: str, user: str, password: str, logmech: str, database: str,
                     seed_id = int(payload["seed_id"])
                 elif "seed_label" in payload:
                     with query_lock:
-                        seed_id = resolve_seed_label(conn, database, payload["seed_label"])
+                        seed_id = run_teradata(
+                            lambda active_conn: resolve_seed_label(
+                                active_conn, database, payload["seed_label"]
+                            )
+                        )
                 else:
                     self.send_json_error(400, "Need seed_id or seed_label")
                     return
