@@ -28,7 +28,8 @@ HTML_TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__DATABASE__ · __BRAND_NAME__ Graph Explorer</title>
+<title>Business Graph Discovery · __BRAND_NAME__</title>
+<link rel="icon" href="__LOGO_URI__">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet"
@@ -42,6 +43,7 @@ __BRAND_STYLE__
 
 <div id="graph"></div>
 <div id="labels"></div>
+<nav id="bfs-breadcrumb" aria-label="Navigation trail"></nav>
 <div id="graph-loading" role="status" aria-live="polite">
   <div class="spinner"></div>
   <div id="graph-loading-text">Centering graph...</div>
@@ -50,14 +52,14 @@ __BRAND_STYLE__
   <div class="empty-icon">→</div>
   <h2>Awaiting input</h2>
   <p>Find an entity on the right, then explore its relationship network.</p>
-  <p>Or click <strong>Full graph</strong> to load every node and edge in <code>__DATABASE__</code> (slow at 100k+).</p>
+  <p>Or click <strong>Full graph</strong> to load every node and edge in <code>__DATABASE__</code>.</p>
 </div>
 
 <div id="info" class="panel">
   <img src="__LOGO_URI__" alt="__BRAND_NAME__">
   <div class="text">
-    <h1>__DATABASE__</h1>
-    <div class="stats" id="stats">loading…</div>
+    <h1>Business Graph Discovery</h1>
+    <div class="stats"><span id="workspace-name">__DATABASE__</span> · <span id="stats">loading…</span></div>
     <div class="hint">Drag · Scroll to zoom · Hover for details · Double-click to drill · Right-click for filters</div>
   </div>
 </div>
@@ -112,7 +114,6 @@ __BRAND_STYLE__
       <span id="bfs-mode">full graph</span>
       <span id="bfs-stats"></span>
     </div>
-    <div id="bfs-breadcrumb"></div>
     <div class="field entity-find-field">
       <div class="field-head"><label for="search-input">Entity</label></div>
       <input id="search-input" type="text" placeholder="Customer, account, transaction, merchant..." autocomplete="off">

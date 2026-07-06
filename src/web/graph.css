@@ -32,7 +32,7 @@
     position: absolute; top: 0; left: 0; right: 320px; bottom: 0;
     z-index: 8; display: flex; align-items: center; justify-content: center;
     flex-direction: column; gap: 12px; color: var(--text);
-    background: rgba(0, 35, 60, 0.72); pointer-events: none;
+    background: var(--bg); pointer-events: none;
     opacity: 1; transition: opacity 0.18s ease;
   }
   #graph-loading.hidden { opacity: 0; visibility: hidden; }
@@ -52,8 +52,8 @@
     position: absolute; left: 0; top: 0;
     color: #ffffff; font-size: 11px; font-weight: 600;
     white-space: nowrap; pointer-events: none; display: none;
-    text-shadow: 0 0 3px var(--td-navy), 0 0 3px var(--td-navy),
-                 0 0 6px var(--td-navy);
+    text-shadow: 0 0 3px var(--bg), 0 0 3px var(--bg),
+                 0 0 6px var(--bg);
     will-change: transform;
   }
   .label-edge {
@@ -61,7 +61,7 @@
     color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 400;
     font-style: italic; white-space: nowrap; pointer-events: none;
     display: none;
-    text-shadow: 0 0 3px var(--td-navy);
+    text-shadow: 0 0 3px var(--bg);
     will-change: transform;
   }
 
@@ -77,11 +77,33 @@
   .seed-halo::after {
     content: 'SEED'; position: absolute; left: 100%; top: -18px;
     transform: translateX(8px); padding: 2px 5px;
-    border-radius: 3px; background: rgba(0, 35, 60, 0.92);
+    border-radius: 3px; background: var(--panel-solid);
     border: 1px solid rgba(255, 255, 255, 0.55);
     color: #ffffff; font-size: 9px; font-weight: 800;
-    letter-spacing: 0.08em; text-shadow: 0 0 4px var(--td-navy);
+    letter-spacing: 0.08em; text-shadow: 0 0 4px var(--bg);
   }
+
+  /* Marks the currently found / selected entity (see .seed-halo for the
+     positioning contract — both are projected each frame in graph.js). */
+  .found-halo {
+    position: absolute; left: 0; top: 0; display: none;
+    width: 30px; height: 30px; border: 3px solid var(--td-orange);
+    border-radius: 50%; pointer-events: none; box-sizing: border-box;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9),
+                0 0 16px rgba(255, 95, 2, 0.9),
+                0 0 26px rgba(255, 95, 2, 0.45);
+    transform: translate(-50%, -50%);
+    will-change: transform, opacity;
+    animation: found-pulse 1.6s ease-in-out infinite;
+  }
+  .found-halo::after {
+    content: 'FOUND'; position: absolute; left: 100%; top: -18px;
+    transform: translateX(8px); padding: 2px 5px;
+    border-radius: 3px; background: var(--td-orange);
+    color: #ffffff; font-size: 9px; font-weight: 800;
+    letter-spacing: 0.08em; text-shadow: 0 0 4px var(--bg);
+  }
+  @keyframes found-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 
   .panel { background: var(--panel); border: 1px solid var(--border);
            border-radius: 8px; -webkit-backdrop-filter: blur(10px);
@@ -144,7 +166,7 @@
                  letter-spacing: 0.8px; }
 
   #search-input { width: 100%; box-sizing: border-box;
-                  background: var(--td-navy); color: var(--text);
+                  background: var(--panel-solid); color: var(--text);
                   border: 1px solid var(--border); border-radius: 6px;
                   padding: 8px 10px; font-family: inherit; font-size: 13px;
                   outline: none; transition: border-color 0.15s; }
@@ -154,7 +176,7 @@
                   align-items: center; gap: 6px; margin-top: 8px;
                   color: var(--text-dim); font-size: 11px; }
   .search-range label { color: var(--text); font-weight: 600; }
-  .search-range input { width: 100%; box-sizing: border-box; background: var(--td-navy);
+  .search-range input { width: 100%; box-sizing: border-box; background: var(--panel-solid);
                         color: var(--text); border: 1px solid var(--border);
                         border-radius: 5px; padding: 6px 7px; font-family: inherit;
                         font-size: 12px; outline: none; }
@@ -173,12 +195,12 @@
   #search-status { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
   .btn-row { display: flex; gap: 6px; margin-bottom: 8px; }
-  .btn-row button { flex: 1; background: var(--td-navy); border: 1px solid var(--border);
+  .btn-row button { flex: 1; background: var(--panel-solid); border: 1px solid var(--border);
                     color: var(--text); border-radius: 6px;
                     padding: 8px 10px; cursor: pointer; font-size: 12px;
                     font-family: inherit; font-weight: 500;
                     transition: all 0.15s; }
-  .btn-row button:hover { background: var(--td-navy-lighter);
+  .btn-row button:hover { background: var(--panel);
                           border-color: var(--td-orange); }
   .btn-row button:active { transform: translateY(1px); }
   .btn-row button.primary { background: var(--td-orange);
@@ -213,7 +235,7 @@
   .row-h { display: flex; align-items: center; justify-content: space-between;
            gap: 10px; margin-bottom: 11px; font-size: 12px; }
   .row-h label { color: var(--text); font-weight: 500; }
-  select { background: var(--td-navy); color: var(--text);
+  select { background: var(--panel-solid); color: var(--text);
            border: 1px solid var(--border); border-radius: 5px;
            padding: 6px 8px; font-size: 12px;
            font-family: inherit; cursor: pointer; }
@@ -225,7 +247,7 @@
                   color: var(--text); font-weight: 500; }
   .checks input[type="checkbox"] { accent-color: var(--td-orange); cursor: pointer; }
 
-  #tooltip { position: fixed; background: var(--td-navy);
+  #tooltip { position: fixed; background: var(--panel-solid);
              border: 1px solid var(--td-orange);
              border-radius: 6px; padding: 9px 11px;
              font-size: 12px; pointer-events: none;
@@ -236,7 +258,7 @@
                   gap: 12px; color: var(--text-dim); margin: 1px 0; }
   #tooltip .row span:last-child { color: var(--text); font-weight: 500; }
   #context-menu { position: fixed; display: none; min-width: 230px;
-                  background: var(--td-navy); border: 1px solid var(--td-orange);
+                  background: var(--panel-solid); border: 1px solid var(--td-orange);
                   border-radius: 6px; padding: 6px; z-index: 80;
                   box-shadow: 0 8px 28px rgba(0,0,0,0.48); }
   #context-menu .title { padding: 6px 8px 8px 8px; color: var(--text-dim);
@@ -251,7 +273,7 @@
                          border-radius: 4px; color: var(--text);
                          padding: 6px 7px; font: inherit; font-size: 12px; }
   #context-menu select option { background: #ffffff; color: #1f2933; }
-  #context-menu select option:checked { background: #d9e8f5; color: #00233c; }
+  #context-menu select option:checked { background: #d9e8f5; color: var(--bg); }
   #context-menu button { display: block; width: calc(100% - 16px);
                          margin: 8px; text-align: center;
                          background: var(--td-orange); border: 0; color: #fff;
@@ -266,12 +288,12 @@
            max-width: 600px; display: none; z-index: 100; }
   #notice { position: absolute; top: 104px; left: 332px; right: 336px;
             display: none; align-items: center; justify-content: space-between;
-            gap: 12px; padding: 8px 10px; background: rgba(16, 45, 66, 0.92);
+            gap: 12px; padding: 8px 10px; background: var(--panel);
             border: 1px solid var(--border); border-radius: 6px;
             color: #d7ecff; font-family: monospace; font-size: 11px;
             line-height: 1.3; z-index: 30; box-shadow: 0 4px 16px rgba(0,0,0,0.28); }
   #notice button { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 4px;
-                   border: 1px solid var(--border); background: var(--td-navy);
+                   border: 1px solid var(--border); background: var(--panel-solid);
                    color: var(--text); cursor: pointer; line-height: 18px; padding: 0; }
 
   *::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -279,16 +301,23 @@
   *::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
   #bfs-status { font-size: 11px; color: var(--text-dim);
                 display: flex; justify-content: space-between; gap: 6px;
-                padding: 6px 8px; background: var(--td-navy);
+                padding: 6px 8px; background: var(--panel-solid);
                 border-radius: 5px; }
   #bfs-status #bfs-mode { color: var(--td-orange); font-weight: 600;
                           text-transform: uppercase; letter-spacing: 0.5px; }
   #bfs-status #bfs-stats { color: var(--text); font-variant-numeric: tabular-nums; }
-  #bfs-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
-                    margin-top: 8px; padding: 6px 8px; background: var(--panel);
-                    border: 1px solid var(--border); border-radius: 5px;
-                    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-                    font-size: 11px; line-height: 1.4; }
+  /* Navigation trail — a wide bar along the bottom of the graph pane,
+     aligned with the top visual-controls bar. Hidden by JS until there is
+     an actual trail (more than one crumb). */
+  #bfs-breadcrumb { position: absolute; bottom: 16px; left: 360px; right: 336px;
+                    z-index: 10; display: none; justify-content: center;
+                    align-items: center; gap: 6px; padding: 8px 14px;
+                    background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 8px; -webkit-backdrop-filter: blur(10px);
+                    backdrop-filter: blur(10px);
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+                    font-size: 12px; line-height: 1.4;
+                    white-space: nowrap; overflow-x: auto; }
   #bfs-breadcrumb a { color: var(--text-dim); text-decoration: none; cursor: pointer; }
   #bfs-breadcrumb a:hover { color: var(--td-orange); }
   #bfs-breadcrumb .sep { color: var(--muted); }
@@ -310,7 +339,7 @@
   #empty-state p { margin: 0 0 12px 0; font-size: 13px; line-height: 1.5;
                    color: var(--text-dim); }
   #empty-state p:last-child { margin-bottom: 0; }
-  #empty-state code { background: var(--td-navy); color: var(--td-orange);
+  #empty-state code { background: var(--panel-solid); color: var(--td-orange);
                       padding: 1px 6px; border-radius: 3px; font-size: 12px;
                       font-family: monospace; }
   #empty-state strong { color: var(--td-white); }
@@ -320,6 +349,7 @@
 
   @media (max-width: 1500px) {
     #visual-controls { left: 340px; min-height: 116px; align-content: flex-start; }
+    #bfs-breadcrumb { left: 340px; }
     .visual-separator { display: none; }
     .visual-group { width: 100%; flex-basis: 100%; }
     .visual-group-nodes, .visual-group-edges { flex-basis: 100%; }
