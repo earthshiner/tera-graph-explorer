@@ -171,6 +171,7 @@ const state = {
   layout:  { mode: 'original' },
   search:  { query: '', matches: new Set(), remote: [] },
   edgeSearch: { query: '', matches: new Set(), remote: [] },   // edge search: matching link indices + whole-DB results
+  edgeSelect: { source: null, target: null, edges: new Set() },  // pinned source->target edge highlight (persists until cleared)
   focused:     null,                            // selected point index, or null
   pinnedLabel: null,                            // node index whose label is always visible
   hovered:     null,                            // hovered point index (transient)
@@ -387,6 +388,11 @@ function edgeHighlight() {
     return { edges: new Set([state.hoveredEdge]),
              nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
   }
+  // Pinned source->target selection wins over transient highlights and persists.
+  if (state.edgeSelect.source != null && state.edgeSelect.target != null) {
+    return { edges: state.edgeSelect.edges,
+             nodes: new Set([state.edgeSelect.source, state.edgeSelect.target]) };
+  }
   if (state.edgeSearch.matches.size) {
     // Edge search: highlight matching edges and their endpoints.
     const nodes = new Set();
@@ -450,6 +456,90 @@ function clearPairPick() {
   if (state.pairPick.length === 0) return;
   state.pairPick = [];
   state.pairEdges = new Set();
+}
+
+// ---- pinned source -> target edge selection ---- //
+// Set from the node context menu. Once both endpoints are chosen the directed
+// edge(s) stay highlighted until explicitly cleared (pill ×, Esc, menu, or a
+// new search) — a plain click will NOT clear it.
+function recomputeEdgeSelectEdges() {
+  state.edgeSelect.edges = new Set();
+  const { source, target } = state.edgeSelect;
+  if (source == null || target == null) return;
+  const sId = data.nodes[source].id;
+  const tId = data.nodes[target].id;
+  data.links.forEach((e, i) => {
+    if (e.source === sId && e.target === tId) state.edgeSelect.edges.add(i);
+  });
+}
+
+function setEdgeEndpoint(role, index) {
+  if (index == null) return;
+  // A pinned edge owns the highlight — drop the transient selections.
+  clearEdgeSearch();
+  clearPairPick();
+  clearTrace();
+  state.focusedEdge = null;
+  state.edgeSelect[role] = index;
+  const { source, target } = state.edgeSelect;
+  if (source != null && target != null) {
+    recomputeEdgeSelectEdges();
+    state.focused = null;
+    safeSetFocusedPoint(null);
+    rebuildAllHighlights();
+  } else {
+    setFocused(index);           // mark the one chosen endpoint until the other is set
+  }
+  renderEdgeSelectPill();
+}
+
+function clearEdgeSelect() {
+  const wasActive = state.edgeSelect.source != null || state.edgeSelect.target != null;
+  state.edgeSelect = { source: null, target: null, edges: new Set() };
+  if (edgeSelectPillEl) edgeSelectPillEl.style.display = 'none';
+  if (wasActive) rebuildAllHighlights();
+}
+
+let edgeSelectPillEl = null;
+function renderEdgeSelectPill() {
+  const { source, target, edges } = state.edgeSelect;
+  if (source == null && target == null) {
+    if (edgeSelectPillEl) edgeSelectPillEl.style.display = 'none';
+    return;
+  }
+  if (!edgeSelectPillEl) {
+    edgeSelectPillEl = document.createElement('div');
+    edgeSelectPillEl.style.cssText =
+      'position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:8;' +
+      'display:flex;align-items:center;gap:10px;background:rgba(15,23,42,.94);' +
+      'color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:999px;' +
+      'padding:6px 8px 6px 14px;font:13px/1.4 Inter,-apple-system,sans-serif;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:80%;';
+    div.appendChild(edgeSelectPillEl);
+  }
+  const nameOf = (i) => (i == null ? '…' : (data.nodes[i].label || `#${data.nodes[i].id}`));
+  let text;
+  if (source != null && target != null) {
+    text = edges.size
+      ? `Edge: ${nameOf(source)} → ${nameOf(target)}`
+      : `No direct edge: ${nameOf(source)} → ${nameOf(target)}`;
+  } else if (source != null) {
+    text = `Source: ${nameOf(source)} · right-click a node → Set as target`;
+  } else {
+    text = `Target: ${nameOf(target)} · right-click a node → Set as source`;
+  }
+  edgeSelectPillEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = text;
+  label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.title = 'Clear edge selection';
+  close.style.cssText = 'background:rgba(148,163,184,.25);border:none;color:#e2e8f0;' +
+    'width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;';
+  close.onclick = clearEdgeSelect;
+  edgeSelectPillEl.append(label, close);
+  edgeSelectPillEl.style.display = 'flex';
 }
 
 // Small transient message centred over the graph (e.g. pair-pick feedback).
@@ -1687,6 +1777,16 @@ function showNodeContextMenu(index, x, y) {
     traceToUltimateParent(index);
   }));
 
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.edgeSelect.source === index ? 'Set as edge source ✓' : 'Set as edge source',
+    () => setEdgeEndpoint('source', index)));
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.edgeSelect.target === index ? 'Set as edge target ✓' : 'Set as edge target',
+    () => setEdgeEndpoint('target', index)));
+  if (state.edgeSelect.source != null || state.edgeSelect.target != null) {
+    nodeContextMenu.appendChild(contextMenuButton('Clear edge selection', clearEdgeSelect));
+  }
+
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
   nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
   nodeContextMenu.style.display = 'block';
@@ -1698,6 +1798,9 @@ addEventListener('click', (ev) => {
 addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
     hideNodeContextMenu();
+    if (state.edgeSelect.source != null || state.edgeSelect.target != null) {
+      clearEdgeSelect();
+    }
     if (state.pairPick.length > 0 || state.trace) {
       clearPairPick();
       clearTrace();
@@ -2022,6 +2125,7 @@ function runSearch(query) {
   }
 
   clearEdgeSearch();          // node and edge search are mutually exclusive
+  clearEdgeSelect();          // a new search deselects any pinned edge
   const matches = [];
   data.nodes.forEach((n, i) => {
     const labelOk = !q || (n.label && n.label.toLowerCase().includes(q));
@@ -2203,6 +2307,7 @@ function runEdgeSearch(query) {
   clearSearch();
   clearPairPick();
   clearTrace();
+  clearEdgeSelect();
   state.focusedEdge = null;
 
   const weightPred = parseWeightQuery(q);
