@@ -132,7 +132,7 @@ __BRAND_STYLE__
     </div>
     <div class="field entity-find-field">
       <div class="field-head"><label for="edge-search-input">Relationship</label></div>
-      <input id="edge-search-input" type="text" placeholder="Type, name, strength, or weight (e.g. launders, &gt;0.7)" autocomplete="off">
+      <input id="edge-search-input" type="text" placeholder="launders · strong · &gt;0.7" autocomplete="off">
     </div>
     <div id="edge-search-results"></div>
     <div id="edge-search-status"></div>

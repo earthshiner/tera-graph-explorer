@@ -2252,7 +2252,11 @@ function renderEdgeSearchRemote(edges) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'search-result';
-    btn.textContent = `${ed.source_label} —${ed.edge_type}→ ${ed.target_label}`;
+    btn.innerHTML =
+      `<div class="er-main">${svgEscape(ed.source_label)}` +
+      `<span class="er-arrow">&#8594;</span>${svgEscape(ed.target_label)}</div>` +
+      `<div class="er-type">${svgEscape(ed.edge_type)}</div>`;
+    btn.title = `${ed.source_label} ${ed.edge_type} ${ed.target_label}`;
     btn.onclick = () => {
       const depth = getBfsDepth();
       navigateTo(ed.source_id, depth, { label: `${ed.source_label} depth ${depth}` });
