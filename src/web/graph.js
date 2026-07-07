@@ -173,7 +173,9 @@ const state = {
   edgeSearch: { query: '', matches: new Set(), remote: [] },   // edge search: matching link indices + whole-DB results
   edgeSelect: { source: null, target: null, edges: new Set() },  // pinned source->target edge highlight (persists until cleared)
   focused:     null,                            // selected point index, or null
-  pinnedLabel: null,                            // node index whose label is always visible
+  pinnedLabel: null,                            // node index whose label is always visible (seed/focus)
+  pinnedNodeLabels: new Set(),                  // node indices individually pinned via right-click
+  pinnedEdgeLabels: new Set(),                  // link indices individually pinned via right-click
   hovered:     null,                            // hovered point index (transient)
   focusedEdge: null,                            // selected edge (link) index, or null
   hoveredEdge: null,                            // hovered edge index (transient)
@@ -1669,6 +1671,32 @@ function pickPointFromEvent(ev) {
 function pointIndexFromEvent(ev) {
   return pickPointFromEvent(ev) ?? state.hovered ?? state.focused;
 }
+// Nearest edge to the event position within a bow-tolerant threshold, or null.
+function edgeIndexFromEvent(ev) {
+  if (isCanvasRenderer || typeof graph.spaceToScreenPosition !== 'function') return null;
+  let positions;
+  try { positions = graph.getPointPositions(); } catch (_) { return null; }
+  if (!positions) return null;
+  const rect = div.getBoundingClientRect();
+  const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < L; i++) {
+    const e = data.links[i];
+    const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+    if (si == null || ti == null) continue;
+    const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
+    const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
+    if (!s || !t) continue;
+    const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
+    let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+    u = Math.max(0, Math.min(1, u));
+    const d = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
+    const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+    const bow = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
+    if (d < bestD && d <= width / 2 + 6 + bow) { bestD = d; best = i; }
+  }
+  return best;
+}
 function handleGraphDoubleClick(ev) {
   ev.preventDefault();
   ev.stopPropagation();
@@ -1681,8 +1709,12 @@ function handleGraphDoubleClick(ev) {
 div.addEventListener('dblclick', handleGraphDoubleClick, { capture: true });
 div.addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
-  const index = pointIndexFromEvent(ev);
-  if (index != null) showNodeContextMenu(index, ev.clientX, ev.clientY);
+  // Precise node pick (no focus fallback) so an edge right-click isn't
+  // mis-attributed to a focused node; fall back to the nearest edge.
+  const nodeIdx = pickPointFromEvent(ev);
+  if (nodeIdx != null) { showNodeContextMenu(nodeIdx, ev.clientX, ev.clientY); return; }
+  const edgeIdx = edgeIndexFromEvent(ev);
+  if (edgeIdx != null) showEdgeContextMenu(edgeIdx, ev.clientX, ev.clientY);
 });
 // Safety net: leaving the graph area always clears transient hover + tooltip.
 div.addEventListener('mouseleave', () => {
@@ -1872,6 +1904,30 @@ function showNodeContextMenu(index, x, y) {
     nodeContextMenu.appendChild(contextMenuButton('Clear edge selection', clearEdgeSelect));
   }
 
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.pinnedNodeLabels.has(index) ? 'Hide label' : 'Show label',
+    () => toggleNodeLabel(index)));
+
+  nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
+  nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
+  nodeContextMenu.style.display = 'block';
+}
+
+// Lightweight context menu for an edge (reuses the node menu container).
+function showEdgeContextMenu(edgeIndex, x, y) {
+  const e = data.links[edgeIndex];
+  if (!e) return;
+  setFocusedEdge(edgeIndex);
+  const s = data.nodes[idIndex.get(e.source)];
+  const t = data.nodes[idIndex.get(e.target)];
+  nodeContextMenu.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = `${s ? s.label : '#' + e.source} —${e.type || 'edge'}→ ${t ? t.label : '#' + e.target}`;
+  nodeContextMenu.appendChild(title);
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.pinnedEdgeLabels.has(edgeIndex) ? 'Hide label' : 'Show label',
+    () => toggleEdgeLabel(edgeIndex)));
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
   nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
   nodeContextMenu.style.display = 'block';
@@ -2559,7 +2615,7 @@ function projectAndUpdateLabels() {
   }
 
   for (let i = 0; i < N; i++) {
-    const showThisLabel = showN || i === pinnedLabel;
+    const showThisLabel = showN || i === pinnedLabel || state.pinnedNodeLabels.has(i);
     nodeLabelEls[i].style.display = showThisLabel ? 'block' : 'none';
     if (!showThisLabel) continue;
     let sp;
@@ -2573,19 +2629,20 @@ function projectAndUpdateLabels() {
       : 'translate(-50%, calc(-100% - 10px))';
     nodeLabelEls[i].style.transform = `translate(${sp[0]}px, ${sp[1]}px) ${labelOffset}`;
   }
-  if (showE) {
-    for (let i = 0; i < L; i++) {
-      const e = data.links[i];
-      const i1 = idIndex.get(e.source), i2 = idIndex.get(e.target);
-      const x = (positions[i1 * 2]     + positions[i2 * 2])     / 2;
-      const y = (positions[i1 * 2 + 1] + positions[i2 * 2 + 1]) / 2;
-      let sp;
-      try { sp = graph.spaceToScreenPosition([x, y]); }
-      catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
-      if (!sp) continue;
-      edgeLabelEls[i].style.transform =
-        `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
-    }
+  for (let i = 0; i < L; i++) {
+    const showThisEdge = showE || state.pinnedEdgeLabels.has(i);
+    edgeLabelEls[i].style.display = showThisEdge ? 'block' : 'none';
+    if (!showThisEdge) continue;
+    const e = data.links[i];
+    const i1 = idIndex.get(e.source), i2 = idIndex.get(e.target);
+    const x = (positions[i1 * 2]     + positions[i2 * 2])     / 2;
+    const y = (positions[i1 * 2 + 1] + positions[i2 * 2 + 1]) / 2;
+    let sp;
+    try { sp = graph.spaceToScreenPosition([x, y]); }
+    catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
+    if (!sp) continue;
+    edgeLabelEls[i].style.transform =
+      `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
   }
 }
 
@@ -2608,7 +2665,8 @@ function stopLabelLoop() {
 // a halo (seed or found), a pinned label, or the label overlays.
 function labelLoopNeeded() {
   return seedIndex != null || state.focused != null || state.pinnedLabel != null
-      || state.labels.nodes || state.labels.edges;
+      || state.labels.nodes || state.labels.edges
+      || state.pinnedNodeLabels.size > 0 || state.pinnedEdgeLabels.size > 0;
 }
 function syncLabelLoop() {
   if (labelLoopNeeded()) startLabelLoop();
@@ -2618,14 +2676,28 @@ function syncLabelLoop() {
 function setNodeLabelsVisible(show) {
   state.labels.nodes = show;
   nodeLabelEls.forEach((el, i) => {
-    el.style.display = (show || i === state.pinnedLabel) ? 'block' : 'none';
+    el.style.display = (show || i === state.pinnedLabel || state.pinnedNodeLabels.has(i)) ? 'block' : 'none';
   });
   syncLabelLoop();
 }
 function setEdgeLabelsVisible(show) {
   state.labels.edges = show;
-  edgeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
+  edgeLabelEls.forEach((el, i) => {
+    el.style.display = (show || state.pinnedEdgeLabels.has(i)) ? 'block' : 'none';
+  });
   syncLabelLoop();
+}
+
+// Right-click label pinning for individual nodes / edges.
+function toggleNodeLabel(i) {
+  if (state.pinnedNodeLabels.has(i)) state.pinnedNodeLabels.delete(i);
+  else state.pinnedNodeLabels.add(i);
+  setNodeLabelsVisible(state.labels.nodes);   // re-applies display incl. pins, keeps loop in sync
+}
+function toggleEdgeLabel(i) {
+  if (state.pinnedEdgeLabels.has(i)) state.pinnedEdgeLabels.delete(i);
+  else state.pinnedEdgeLabels.add(i);
+  setEdgeLabelsVisible(state.labels.edges);
 }
 
 document.getElementById('chk-nodeLabels').addEventListener('change', (ev) => {
