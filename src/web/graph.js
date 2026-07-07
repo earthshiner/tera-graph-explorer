@@ -388,6 +388,11 @@ function edgeHighlight() {
     return { edges: new Set([state.hoveredEdge]),
              nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
   }
+  // A live node hover always takes over so hovering gives immediate feedback,
+  // even while a trace / pinned edge / search highlight is active. Returning
+  // null lets the standard neighbourhood-hover path run; the persistent
+  // highlight resumes the moment the cursor leaves the node.
+  if (state.hovered != null) return { edges: null, nodes: null };
   // Pinned source->target selection wins over transient highlights and persists.
   if (state.edgeSelect.source != null && state.edgeSelect.target != null) {
     return { edges: state.edgeSelect.edges,
