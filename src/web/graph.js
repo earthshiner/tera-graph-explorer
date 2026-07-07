@@ -786,12 +786,11 @@ function rebuildLinkColors() {
   const directionLevels = edgeDirectionLevels();
 
   data.links.forEach((e, i) => {
+    // Neutral by default; directional accent (green upstream / orange
+    // downstream) is applied ONLY to highlighted edges — i.e. when hovering a
+    // connected node or the edge, or under a pinned selection.
     let r = 1.0, g = 1.0, b = 1.0;                              // default white
     let alpha = 0.20 + (e.weight || 0.5) * 0.50;                // weight-derived
-    if (edgeIsUpstream(i, directionLevels)) {
-      r = UPSTREAM_RGB[0]; g = UPSTREAM_RGB[1]; b = UPSTREAM_RGB[2];
-      alpha = Math.max(alpha, 0.72);
-    }
 
     if (ekSet != null) {
       // Edge focus: only the highlighted edges stay accented, all others nearly black
@@ -1026,7 +1025,10 @@ function updateHover() {
       const c = proj(i);
       if (!c) continue;
       const dx = c[0] - px, dy = c[1] - py, d2 = dx * dx + dy * dy;
-      const r = webglNodeScreenRadius(i, positions, radiusCache) + 3;
+      // Tight hit radius (≈ the visible dot, capped well below the arrow-overlay
+      // estimate) so nodes don't capture the area around them and edges stay
+      // hoverable right up to a node — including big hubs.
+      const r = Math.min(webglNodeScreenRadius(i, positions, radiusCache), 16);
       if (d2 <= r * r && d2 < bestD) { bestD = d2; hoverNode = i; }
     }
     if (hoverNode == null) hoverEdge = nearestEdgeIndex(px, py, positions, proj);
@@ -1523,7 +1525,6 @@ function drawArrowOverlay() {
   if (!positions || positions.length < N * 2) return;
 
   const radiusCache = new Map();
-  const directionLevels = edgeDirectionLevels();
   const maxArrows = Math.min(L, 60000);
   for (let i = 0; i < maxArrows; i++) {
     const s = linksArr[i * 2], t = linksArr[i * 2 + 1];
@@ -1566,7 +1567,9 @@ function drawArrowOverlay() {
     const startY = source[1] + suy * (sourceRadius + 1);
     const tipX = target[0] - tux * (targetRadius + 1);
     const tipY = target[1] - tuy * (targetRadius + 1);
-    const stroke = edgeIsUpstream(i, directionLevels) ? UPSTREAM_HEX : linkRgba(i);
+    // Match the link colours: neutral unless the edge is highlighted (linkRgba
+    // reflects the buffer set by rebuildLinkColors), not always-green upstream.
+    const stroke = linkRgba(i);
 
     arrowCtx.beginPath();
     arrowCtx.moveTo(startX, startY);
