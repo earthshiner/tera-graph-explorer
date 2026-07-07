@@ -911,6 +911,7 @@ addEventListener('mousemove', (ev) => {
     tooltip.style.left = (mouseX + 14) + 'px';
     tooltip.style.top  = (mouseY + 14) + 'px';
   }
+  reconcileHoverSoon();
 });
 function showTooltip(i) {
   const n = data.nodes[i];
@@ -944,6 +945,63 @@ function showEdgeTooltip(i) {
 }
 
 function hideTooltip() { tooltip.style.display = 'none'; }
+
+// ---- hover reconciliation ----
+// cosmos.gl's link mouse-out is unreliable (thin links, fast moves), so we
+// verify the current hover geometrically on every move and drive the hide
+// ourselves. Cheap: only the single hovered node/edge is tested.
+let reconcileScheduled = false;
+function reconcileHoverSoon() {
+  if (reconcileScheduled || isCanvasRenderer) return;
+  if (state.hovered == null && state.hoveredEdge == null) return;
+  reconcileScheduled = true;
+  requestAnimationFrame(() => { reconcileScheduled = false; reconcileHover(); });
+}
+
+function pointerNearEdge(i, px, py, positions) {
+  const e = data.links[i];
+  const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+  if (si == null || ti == null) return true;
+  const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
+  const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
+  if (!s || !t) return true;                       // can't tell — keep (avoid false hide)
+  // Distance to the straight segment. We deliberately do NOT model the curve:
+  // cosmos's rendered bend is unknown, so we add a bow-tolerant margin that
+  // scales with edge length. This never hides while the cursor is plausibly on
+  // the (possibly curved) edge; it hides once the cursor clearly moves away.
+  const dx = t[0] - s[0], dy = t[1] - s[1];
+  const len2 = dx * dx + dy * dy;
+  let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+  u = Math.max(0, Math.min(1, u));
+  const dist = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
+  const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+  const bowMargin = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
+  return dist <= width / 2 + 12 + bowMargin;
+}
+
+function reconcileHover() {
+  if (typeof graph.spaceToScreenPosition !== 'function') return;
+  let positions;
+  try { positions = graph.getPointPositions(); } catch (_) { return; }
+  if (!positions || positions.length < data.nodes.length * 2) return;
+  const rect = div.getBoundingClientRect();
+  const px = mouseX - rect.left, py = mouseY - rect.top;
+  let changed = false;
+  try {
+    if (state.hovered != null) {
+      const c = graph.spaceToScreenPosition([positions[state.hovered * 2], positions[state.hovered * 2 + 1]]);
+      const r = webglNodeScreenRadius(state.hovered, positions, new Map()) + 5;
+      if (!c || Math.hypot(c[0] - px, c[1] - py) > r) { state.hovered = null; changed = true; }
+    }
+    if (state.hoveredEdge != null && !pointerNearEdge(state.hoveredEdge, px, py, positions)) {
+      state.hoveredEdge = null; changed = true;
+    }
+  } catch (_) { return; }
+  if (changed) {
+    if (state.hovered == null && state.hoveredEdge == null) hideTooltip();
+    rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths();
+  }
+}
 
 // ---- Canvas fallback for browser sessions without WebGL2 ---- //
 class CanvasFallbackGraph {
@@ -1258,25 +1316,32 @@ const initialConfig = {
   // interaction continues to work either way.
   hoveredLinkCursor: 'pointer',
   hoveredLinkColor: BRAND_ACCENT,
-  hoveredLinkWidthIncrease: 2,
+  // Our own rebuildLinkColors handles hover emphasis; cosmos's built-in width
+  // bump competes with the node's incident highlight and reads as flicker.
+  hoveredLinkWidthIncrease: 0,
 
   onPointMouseOver: (index) => {
     if (index == null) return;
     showTooltip(index);
-    if (state.hovered !== index) {
+    // Node hover wins: drop any (often incidental) edge hover so the node's
+    // incident-edge highlight is stable rather than fighting a single edge.
+    if (state.hovered !== index || state.hoveredEdge != null) {
       state.hovered = index;
+      state.hoveredEdge = null;
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
     }
   },
   onPointMouseOut: () => {
-    hideTooltip();
     if (state.hovered != null) {
       state.hovered = null;
+      hideTooltip();
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
+    } else {
+      hideTooltip();
     }
   },
   onClick: (index, positionOrEvent, maybeEvent) => {
@@ -1314,18 +1379,22 @@ const initialConfig = {
 
   onLinkMouseOver: (linkIndex) => {
     if (linkIndex == null) return;
-    showEdgeTooltip(linkIndex);
+    // A node hover takes priority — ignore edges incidental to it. The
+    // reconciler clears the node hover once the cursor leaves it, letting a
+    // genuine edge hover take over.
+    if (state.hovered != null) return;
     if (state.hoveredEdge !== linkIndex) {
       state.hoveredEdge = linkIndex;
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
     }
+    showEdgeTooltip(linkIndex);
   },
   onLinkMouseOut: () => {
-    hideTooltip();
     if (state.hoveredEdge != null) {
       state.hoveredEdge = null;
+      hideTooltip();
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
@@ -1609,6 +1678,17 @@ div.addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
   const index = pointIndexFromEvent(ev);
   if (index != null) showNodeContextMenu(index, ev.clientX, ev.clientY);
+});
+// Safety net: leaving the graph area always clears transient hover + tooltip.
+div.addEventListener('mouseleave', () => {
+  hideTooltip();
+  if (state.hovered != null || state.hoveredEdge != null) {
+    state.hovered = null;
+    state.hoveredEdge = null;
+    rebuildPointColors();
+    rebuildLinkColors();
+    rebuildLinkWidths();
+  }
 });
 
 graph.setPointPositions(pointPositions);
