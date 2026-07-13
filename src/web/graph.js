@@ -1357,9 +1357,12 @@ const initialConfig = {
   // older these are silently ignored — graceful degradation; node
   // interaction continues to work either way.
   hoveredLinkCursor: 'pointer',
-  hoveredLinkColor: BRAND_ACCENT,
-  // Our own rebuildLinkColors handles hover emphasis; cosmos's built-in width
-  // bump competes with the node's incident highlight and reads as flicker.
+  // Do NOT set hoveredLinkColor / hoveredLinkWidthIncrease: cosmos renders a
+  // hovered link in a separate pass whose curved-link control point flips
+  // relative to the base draw, so the edge visibly swaps concave<->convex on
+  // hover. We accent the hovered edge ourselves in the shared link buffer
+  // (rebuildLinkColors) instead — same geometry, just recoloured.
+  hoveredLinkColor: undefined,
   hoveredLinkWidthIncrease: 0,
 
   // In WebGL, node + edge hover are owned by our mousemove hit-test
