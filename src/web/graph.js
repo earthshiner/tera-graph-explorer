@@ -976,21 +976,32 @@ function reconcileHoverSoon() {
 // built-in link hover is pixel-tight). Distance is to the straight segment
 // plus a bow-tolerant margin — the rendered curve's exact bend is unknown.
 const EDGE_HOVER_PAD = 14;
+const EDGE_HOVER_KEEP_EXTRA = 24;   // hysteresis: keep a hovered edge within a larger zone so small moves don't drop it
+
+// Perpendicular distance from (px,py) to the straight segment of edge i, plus
+// its squared length. The curve hugs the segment ends and bows out mid-span;
+// edgeHoverThreshold adds a bow-tolerant margin.
+function edgeScreenDistance(i, px, py, proj) {
+  const e = data.links[i];
+  const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+  if (si == null || ti == null) return { d: Infinity, len2: 0 };
+  const s = proj(si), t = proj(ti);
+  if (!s || !t) return { d: Infinity, len2: 0 };
+  const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
+  let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+  u = Math.max(0, Math.min(1, u));
+  return { d: Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy)), len2 };
+}
+function edgeHoverThreshold(i, len2) {
+  const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+  const bow = state.edges.curved ? Math.min(55, Math.sqrt(len2) * 0.16) : 0;
+  return width / 2 + EDGE_HOVER_PAD + bow;
+}
 function nearestEdgeIndex(px, py, positions, proj) {
   let best = null, bestD = Infinity;
   for (let i = 0; i < L; i++) {
-    const e = data.links[i];
-    const si = idIndex.get(e.source), ti = idIndex.get(e.target);
-    if (si == null || ti == null) continue;
-    const s = proj(si), t = proj(ti);
-    if (!s || !t) continue;
-    const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
-    let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
-    u = Math.max(0, Math.min(1, u));
-    const d = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
-    const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
-    const bow = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
-    if (d < bestD && d <= width / 2 + EDGE_HOVER_PAD + bow) { bestD = d; best = i; }
+    const { d, len2 } = edgeScreenDistance(i, px, py, proj);
+    if (d < bestD && d <= edgeHoverThreshold(i, len2)) { bestD = d; best = i; }
   }
   return best;
 }
@@ -1031,7 +1042,18 @@ function updateHover() {
       const r = Math.min(webglNodeScreenRadius(i, positions, radiusCache), 16);
       if (d2 <= r * r && d2 < bestD) { bestD = d2; hoverNode = i; }
     }
-    if (hoverNode == null) hoverEdge = nearestEdgeIndex(px, py, positions, proj);
+    if (hoverNode == null) {
+      // Hysteresis: if we're already hovering an edge, keep it while the cursor
+      // stays within a larger 'keep' zone, so moving toward/along it doesn't
+      // drop the highlight. Otherwise acquire the nearest edge normally.
+      if (state.hoveredEdge != null) {
+        const { d, len2 } = edgeScreenDistance(state.hoveredEdge, px, py, proj);
+        if (d <= edgeHoverThreshold(state.hoveredEdge, len2) + EDGE_HOVER_KEEP_EXTRA) {
+          hoverEdge = state.hoveredEdge;
+        }
+      }
+      if (hoverEdge == null) hoverEdge = nearestEdgeIndex(px, py, positions, proj);
+    }
   }
 
   const prevNode = state.hovered, prevEdge = state.hoveredEdge;
@@ -1332,6 +1354,9 @@ const initialConfig = {
   scalePointsOnZoom: true,
   renderLinks: true,
   curvedLinks: state.edges.curved,
+  // Gentler bow than cosmos's default (~0.5): keeps the visible curve close to
+  // the straight line the hover hit-test uses, so edges are easy to point at.
+  curvedLinkControlPointDistance: 0.2,
   linkArrows: false,
   renderLinkArrows: false,
 
