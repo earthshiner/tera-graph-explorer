@@ -138,10 +138,19 @@ const PALETTE = (BRAND.palette && BRAND.palette.length)
       '#F472B6',  // pink
       '#FBBF24',  // amber
     ];
+// Deterministic palette slot from the value's name, so a given community /
+// category / role keeps the SAME colour across different subgraphs (navigating
+// to another view must not reshuffle the palette).
+function stableColorIndex(value) {
+  const s = String(value);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+  return h % PALETTE.length;
+}
 function buildColorMap(attr) {
   const values = [...new Set(data.nodes.map(n => n[attr]).filter(v => v != null))].sort();
   return { values,
-           cmap: Object.fromEntries(values.map((v, i) => [v, PALETTE[i % PALETTE.length]])) };
+           cmap: Object.fromEntries(values.map(v => [v, PALETTE[stableColorIndex(v)]])) };
 }
 const colorMaps = {
   community: buildColorMap('community'),
@@ -777,12 +786,11 @@ function rebuildLinkColors() {
   const directionLevels = edgeDirectionLevels();
 
   data.links.forEach((e, i) => {
+    // Neutral by default; directional accent (green upstream / orange
+    // downstream) is applied ONLY to highlighted edges — i.e. when hovering a
+    // connected node or the edge, or under a pinned selection.
     let r = 1.0, g = 1.0, b = 1.0;                              // default white
     let alpha = 0.20 + (e.weight || 0.5) * 0.50;                // weight-derived
-    if (edgeIsUpstream(i, directionLevels)) {
-      r = UPSTREAM_RGB[0]; g = UPSTREAM_RGB[1]; b = UPSTREAM_RGB[2];
-      alpha = Math.max(alpha, 0.72);
-    }
 
     if (ekSet != null) {
       // Edge focus: only the highlighted edges stay accented, all others nearly black
@@ -960,54 +968,81 @@ function hideTooltip() { tooltip.style.display = 'none'; }
 let reconcileScheduled = false;
 function reconcileHoverSoon() {
   if (reconcileScheduled || isCanvasRenderer) return;
-  if (state.hovered == null && state.hoveredEdge == null) return;
   reconcileScheduled = true;
-  requestAnimationFrame(() => { reconcileScheduled = false; reconcileHover(); });
+  requestAnimationFrame(() => { reconcileScheduled = false; updateHover(); });
 }
 
-function pointerNearEdge(i, px, py, positions) {
-  const e = data.links[i];
-  const si = idIndex.get(e.source), ti = idIndex.get(e.target);
-  if (si == null || ti == null) return true;
-  const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
-  const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
-  if (!s || !t) return true;                       // can't tell — keep (avoid false hide)
-  // Distance to the straight segment. We deliberately do NOT model the curve:
-  // cosmos's rendered bend is unknown, so we add a bow-tolerant margin that
-  // scales with edge length. This never hides while the cursor is plausibly on
-  // the (possibly curved) edge; it hides once the cursor clearly moves away.
-  const dx = t[0] - s[0], dy = t[1] - s[1];
-  const len2 = dx * dx + dy * dy;
-  let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
-  u = Math.max(0, Math.min(1, u));
-  const dist = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
-  const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
-  const bowMargin = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
-  return dist <= width / 2 + 12 + bowMargin;
+// Generous pixel margin around an edge so it is easy to point at (cosmos's
+// built-in link hover is pixel-tight). Distance is to the straight segment
+// plus a bow-tolerant margin — the rendered curve's exact bend is unknown.
+const EDGE_HOVER_PAD = 14;
+function nearestEdgeIndex(px, py, positions, proj) {
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < L; i++) {
+    const e = data.links[i];
+    const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+    if (si == null || ti == null) continue;
+    const s = proj(si), t = proj(ti);
+    if (!s || !t) continue;
+    const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
+    let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+    u = Math.max(0, Math.min(1, u));
+    const d = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
+    const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+    const bow = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
+    if (d < bestD && d <= width / 2 + EDGE_HOVER_PAD + bow) { bestD = d; best = i; }
+  }
+  return best;
 }
 
-function reconcileHover() {
+// Single mousemove-driven hover authority for BOTH nodes and edges. A node
+// under the cursor always wins; otherwise the nearest edge within a generous
+// threshold is used. Deterministic and independent of cosmos's pixel-tight
+// hover callbacks (which are left unused). Only the single hovered node/edge
+// changes trigger a rebuild.
+function updateHover() {
   if (typeof graph.spaceToScreenPosition !== 'function') return;
   let positions;
   try { positions = graph.getPointPositions(); } catch (_) { return; }
-  if (!positions || positions.length < data.nodes.length * 2) return;
+  const count = data.nodes.length;
+  if (!positions || positions.length < count * 2) return;
   const rect = div.getBoundingClientRect();
   const px = mouseX - rect.left, py = mouseY - rect.top;
-  let changed = false;
-  try {
-    if (state.hovered != null) {
-      const c = graph.spaceToScreenPosition([positions[state.hovered * 2], positions[state.hovered * 2 + 1]]);
-      const r = webglNodeScreenRadius(state.hovered, positions, new Map()) + 5;
-      if (!c || Math.hypot(c[0] - px, c[1] - py) > r) { state.hovered = null; changed = true; }
+  const inside = px >= 0 && py >= 0 && px <= rect.width && py <= rect.height;
+
+  const projCache = new Array(count);
+  const proj = (idx) => {
+    if (projCache[idx] !== undefined) return projCache[idx];
+    let p; try { p = graph.spaceToScreenPosition([positions[idx * 2], positions[idx * 2 + 1]]); } catch (_) { p = null; }
+    return (projCache[idx] = p || null);
+  };
+  const radiusCache = new Map();
+
+  let hoverNode = null, hoverEdge = null;
+  if (inside) {
+    let bestD = Infinity;
+    for (let i = 0; i < count; i++) {
+      const c = proj(i);
+      if (!c) continue;
+      const dx = c[0] - px, dy = c[1] - py, d2 = dx * dx + dy * dy;
+      // Tight hit radius (≈ the visible dot, capped well below the arrow-overlay
+      // estimate) so nodes don't capture the area around them and edges stay
+      // hoverable right up to a node — including big hubs.
+      const r = Math.min(webglNodeScreenRadius(i, positions, radiusCache), 16);
+      if (d2 <= r * r && d2 < bestD) { bestD = d2; hoverNode = i; }
     }
-    if (state.hoveredEdge != null && !pointerNearEdge(state.hoveredEdge, px, py, positions)) {
-      state.hoveredEdge = null; changed = true;
-    }
-  } catch (_) { return; }
-  if (changed) {
-    if (state.hovered == null && state.hoveredEdge == null) hideTooltip();
-    rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths();
+    if (hoverNode == null) hoverEdge = nearestEdgeIndex(px, py, positions, proj);
   }
+
+  const prevNode = state.hovered, prevEdge = state.hoveredEdge;
+  let changed = false;
+  if (hoverNode !== state.hovered) { state.hovered = hoverNode; changed = true; }
+  if (hoverEdge !== state.hoveredEdge) { state.hoveredEdge = hoverEdge; changed = true; }
+  if (changed) { rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths(); }
+
+  if (hoverNode != null) { if (hoverNode !== prevNode) showTooltip(hoverNode); }
+  else if (hoverEdge != null) { if (hoverEdge !== prevEdge) showEdgeTooltip(hoverEdge); }
+  else hideTooltip();
 }
 
 // ---- Canvas fallback for browser sessions without WebGL2 ---- //
@@ -1327,28 +1362,22 @@ const initialConfig = {
   // bump competes with the node's incident highlight and reads as flicker.
   hoveredLinkWidthIncrease: 0,
 
+  // In WebGL, node + edge hover are owned by our mousemove hit-test
+  // (updateHover); cosmos's hover ring still renders for affordance. In the
+  // Canvas fallback (no updateHover), these keep node hover working as before.
   onPointMouseOver: (index) => {
-    if (index == null) return;
+    if (!isCanvasRenderer || index == null) return;
     showTooltip(index);
-    // Node hover wins: drop any (often incidental) edge hover so the node's
-    // incident-edge highlight is stable rather than fighting a single edge.
-    if (state.hovered !== index || state.hoveredEdge != null) {
+    if (state.hovered !== index) {
       state.hovered = index;
-      state.hoveredEdge = null;
-      rebuildPointColors();
-      rebuildLinkColors();
-      rebuildLinkWidths();
+      rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths();
     }
   },
   onPointMouseOut: () => {
-    if (state.hovered != null) {
+    hideTooltip();
+    if (isCanvasRenderer && state.hovered != null) {
       state.hovered = null;
-      hideTooltip();
-      rebuildPointColors();
-      rebuildLinkColors();
-      rebuildLinkWidths();
-    } else {
-      hideTooltip();
+      rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths();
     }
   },
   onClick: (index, positionOrEvent, maybeEvent) => {
@@ -1384,29 +1413,10 @@ const initialConfig = {
     showNodeContextMenu(index, ev?.clientX ?? innerWidth / 2, ev?.clientY ?? innerHeight / 2);
   },
 
-  onLinkMouseOver: (linkIndex) => {
-    if (linkIndex == null) return;
-    // A node hover takes priority — ignore edges incidental to it. The
-    // reconciler clears the node hover once the cursor leaves it, letting a
-    // genuine edge hover take over.
-    if (state.hovered != null) return;
-    if (state.hoveredEdge !== linkIndex) {
-      state.hoveredEdge = linkIndex;
-      rebuildPointColors();
-      rebuildLinkColors();
-      rebuildLinkWidths();
-    }
-    showEdgeTooltip(linkIndex);
-  },
-  onLinkMouseOut: () => {
-    if (state.hoveredEdge != null) {
-      state.hoveredEdge = null;
-      hideTooltip();
-      rebuildPointColors();
-      rebuildLinkColors();
-      rebuildLinkWidths();
-    }
-  },
+  // Edge hover is driven by our own mousemove hit-test (updateHover) with a
+  // generous threshold — cosmos's pixel-tight link hover is left unused.
+  onLinkMouseOver: () => {},
+  onLinkMouseOut: () => {},
   onLinkClick: (linkIndex) => {
     // Clicking an edge clears any node focus and selects this edge
     if (state.focused != null) {
@@ -1515,7 +1525,6 @@ function drawArrowOverlay() {
   if (!positions || positions.length < N * 2) return;
 
   const radiusCache = new Map();
-  const directionLevels = edgeDirectionLevels();
   const maxArrows = Math.min(L, 60000);
   for (let i = 0; i < maxArrows; i++) {
     const s = linksArr[i * 2], t = linksArr[i * 2 + 1];
@@ -1558,7 +1567,9 @@ function drawArrowOverlay() {
     const startY = source[1] + suy * (sourceRadius + 1);
     const tipX = target[0] - tux * (targetRadius + 1);
     const tipY = target[1] - tuy * (targetRadius + 1);
-    const stroke = edgeIsUpstream(i, directionLevels) ? UPSTREAM_HEX : linkRgba(i);
+    // Match the link colours: neutral unless the edge is highlighted (linkRgba
+    // reflects the buffer set by rebuildLinkColors), not always-green upstream.
+    const stroke = linkRgba(i);
 
     arrowCtx.beginPath();
     arrowCtx.moveTo(startX, startY);
@@ -1671,31 +1682,20 @@ function pickPointFromEvent(ev) {
 function pointIndexFromEvent(ev) {
   return pickPointFromEvent(ev) ?? state.hovered ?? state.focused;
 }
-// Nearest edge to the event position within a bow-tolerant threshold, or null.
+// Nearest edge to the event position within the (generous) hover threshold.
 function edgeIndexFromEvent(ev) {
   if (isCanvasRenderer || typeof graph.spaceToScreenPosition !== 'function') return null;
   let positions;
   try { positions = graph.getPointPositions(); } catch (_) { return null; }
   if (!positions) return null;
   const rect = div.getBoundingClientRect();
-  const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
-  let best = null, bestD = Infinity;
-  for (let i = 0; i < L; i++) {
-    const e = data.links[i];
-    const si = idIndex.get(e.source), ti = idIndex.get(e.target);
-    if (si == null || ti == null) continue;
-    const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
-    const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
-    if (!s || !t) continue;
-    const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
-    let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
-    u = Math.max(0, Math.min(1, u));
-    const d = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
-    const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
-    const bow = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
-    if (d < bestD && d <= width / 2 + 6 + bow) { bestD = d; best = i; }
-  }
-  return best;
+  const projCache = new Array(data.nodes.length);
+  const proj = (idx) => {
+    if (projCache[idx] !== undefined) return projCache[idx];
+    let p; try { p = graph.spaceToScreenPosition([positions[idx * 2], positions[idx * 2 + 1]]); } catch (_) { p = null; }
+    return (projCache[idx] = p || null);
+  };
+  return nearestEdgeIndex(ev.clientX - rect.left, ev.clientY - rect.top, positions, proj);
 }
 function handleGraphDoubleClick(ev) {
   ev.preventDefault();
