@@ -171,8 +171,11 @@ const state = {
   layout:  { mode: 'original' },
   search:  { query: '', matches: new Set(), remote: [] },
   edgeSearch: { query: '', matches: new Set(), remote: [] },   // edge search: matching link indices + whole-DB results
+  edgeSelect: { source: null, target: null, edges: new Set() },  // pinned source->target edge highlight (persists until cleared)
   focused:     null,                            // selected point index, or null
-  pinnedLabel: null,                            // node index whose label is always visible
+  pinnedLabel: null,                            // node index whose label is always visible (seed/focus)
+  pinnedNodeLabels: new Set(),                  // node indices individually pinned via right-click
+  pinnedEdgeLabels: new Set(),                  // link indices individually pinned via right-click
   hovered:     null,                            // hovered point index (transient)
   focusedEdge: null,                            // selected edge (link) index, or null
   hoveredEdge: null,                            // hovered edge index (transient)
@@ -387,6 +390,16 @@ function edgeHighlight() {
     return { edges: new Set([state.hoveredEdge]),
              nodes: new Set([idIndex.get(e.source), idIndex.get(e.target)]) };
   }
+  // A live node hover always takes over so hovering gives immediate feedback,
+  // even while a trace / pinned edge / search highlight is active. Returning
+  // null lets the standard neighbourhood-hover path run; the persistent
+  // highlight resumes the moment the cursor leaves the node.
+  if (state.hovered != null) return { edges: null, nodes: null };
+  // Pinned source->target selection wins over transient highlights and persists.
+  if (state.edgeSelect.source != null && state.edgeSelect.target != null) {
+    return { edges: state.edgeSelect.edges,
+             nodes: new Set([state.edgeSelect.source, state.edgeSelect.target]) };
+  }
   if (state.edgeSearch.matches.size) {
     // Edge search: highlight matching edges and their endpoints.
     const nodes = new Set();
@@ -450,6 +463,90 @@ function clearPairPick() {
   if (state.pairPick.length === 0) return;
   state.pairPick = [];
   state.pairEdges = new Set();
+}
+
+// ---- pinned source -> target edge selection ---- //
+// Set from the node context menu. Once both endpoints are chosen the directed
+// edge(s) stay highlighted until explicitly cleared (pill ×, Esc, menu, or a
+// new search) — a plain click will NOT clear it.
+function recomputeEdgeSelectEdges() {
+  state.edgeSelect.edges = new Set();
+  const { source, target } = state.edgeSelect;
+  if (source == null || target == null) return;
+  const sId = data.nodes[source].id;
+  const tId = data.nodes[target].id;
+  data.links.forEach((e, i) => {
+    if (e.source === sId && e.target === tId) state.edgeSelect.edges.add(i);
+  });
+}
+
+function setEdgeEndpoint(role, index) {
+  if (index == null) return;
+  // A pinned edge owns the highlight — drop the transient selections.
+  clearEdgeSearch();
+  clearPairPick();
+  clearTrace();
+  state.focusedEdge = null;
+  state.edgeSelect[role] = index;
+  const { source, target } = state.edgeSelect;
+  if (source != null && target != null) {
+    recomputeEdgeSelectEdges();
+    state.focused = null;
+    safeSetFocusedPoint(null);
+    rebuildAllHighlights();
+  } else {
+    setFocused(index);           // mark the one chosen endpoint until the other is set
+  }
+  renderEdgeSelectPill();
+}
+
+function clearEdgeSelect() {
+  const wasActive = state.edgeSelect.source != null || state.edgeSelect.target != null;
+  state.edgeSelect = { source: null, target: null, edges: new Set() };
+  if (edgeSelectPillEl) edgeSelectPillEl.style.display = 'none';
+  if (wasActive) rebuildAllHighlights();
+}
+
+let edgeSelectPillEl = null;
+function renderEdgeSelectPill() {
+  const { source, target, edges } = state.edgeSelect;
+  if (source == null && target == null) {
+    if (edgeSelectPillEl) edgeSelectPillEl.style.display = 'none';
+    return;
+  }
+  if (!edgeSelectPillEl) {
+    edgeSelectPillEl = document.createElement('div');
+    edgeSelectPillEl.style.cssText =
+      'position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:8;' +
+      'display:flex;align-items:center;gap:10px;background:rgba(15,23,42,.94);' +
+      'color:#e2e8f0;border:1px solid rgba(148,163,184,.35);border-radius:999px;' +
+      'padding:6px 8px 6px 14px;font:13px/1.4 Inter,-apple-system,sans-serif;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:80%;';
+    div.appendChild(edgeSelectPillEl);
+  }
+  const nameOf = (i) => (i == null ? '…' : (data.nodes[i].label || `#${data.nodes[i].id}`));
+  let text;
+  if (source != null && target != null) {
+    text = edges.size
+      ? `Edge: ${nameOf(source)} → ${nameOf(target)}`
+      : `No direct edge: ${nameOf(source)} → ${nameOf(target)}`;
+  } else if (source != null) {
+    text = `Source: ${nameOf(source)} · right-click a node → Set as target`;
+  } else {
+    text = `Target: ${nameOf(target)} · right-click a node → Set as source`;
+  }
+  edgeSelectPillEl.innerHTML = '';
+  const label = document.createElement('span');
+  label.textContent = text;
+  label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.title = 'Clear edge selection';
+  close.style.cssText = 'background:rgba(148,163,184,.25);border:none;color:#e2e8f0;' +
+    'width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;';
+  close.onclick = clearEdgeSelect;
+  edgeSelectPillEl.append(label, close);
+  edgeSelectPillEl.style.display = 'flex';
 }
 
 // Small transient message centred over the graph (e.g. pair-pick feedback).
@@ -821,6 +918,7 @@ addEventListener('mousemove', (ev) => {
     tooltip.style.left = (mouseX + 14) + 'px';
     tooltip.style.top  = (mouseY + 14) + 'px';
   }
+  reconcileHoverSoon();
 });
 function showTooltip(i) {
   const n = data.nodes[i];
@@ -854,6 +952,63 @@ function showEdgeTooltip(i) {
 }
 
 function hideTooltip() { tooltip.style.display = 'none'; }
+
+// ---- hover reconciliation ----
+// cosmos.gl's link mouse-out is unreliable (thin links, fast moves), so we
+// verify the current hover geometrically on every move and drive the hide
+// ourselves. Cheap: only the single hovered node/edge is tested.
+let reconcileScheduled = false;
+function reconcileHoverSoon() {
+  if (reconcileScheduled || isCanvasRenderer) return;
+  if (state.hovered == null && state.hoveredEdge == null) return;
+  reconcileScheduled = true;
+  requestAnimationFrame(() => { reconcileScheduled = false; reconcileHover(); });
+}
+
+function pointerNearEdge(i, px, py, positions) {
+  const e = data.links[i];
+  const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+  if (si == null || ti == null) return true;
+  const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
+  const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
+  if (!s || !t) return true;                       // can't tell — keep (avoid false hide)
+  // Distance to the straight segment. We deliberately do NOT model the curve:
+  // cosmos's rendered bend is unknown, so we add a bow-tolerant margin that
+  // scales with edge length. This never hides while the cursor is plausibly on
+  // the (possibly curved) edge; it hides once the cursor clearly moves away.
+  const dx = t[0] - s[0], dy = t[1] - s[1];
+  const len2 = dx * dx + dy * dy;
+  let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+  u = Math.max(0, Math.min(1, u));
+  const dist = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
+  const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+  const bowMargin = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
+  return dist <= width / 2 + 12 + bowMargin;
+}
+
+function reconcileHover() {
+  if (typeof graph.spaceToScreenPosition !== 'function') return;
+  let positions;
+  try { positions = graph.getPointPositions(); } catch (_) { return; }
+  if (!positions || positions.length < data.nodes.length * 2) return;
+  const rect = div.getBoundingClientRect();
+  const px = mouseX - rect.left, py = mouseY - rect.top;
+  let changed = false;
+  try {
+    if (state.hovered != null) {
+      const c = graph.spaceToScreenPosition([positions[state.hovered * 2], positions[state.hovered * 2 + 1]]);
+      const r = webglNodeScreenRadius(state.hovered, positions, new Map()) + 5;
+      if (!c || Math.hypot(c[0] - px, c[1] - py) > r) { state.hovered = null; changed = true; }
+    }
+    if (state.hoveredEdge != null && !pointerNearEdge(state.hoveredEdge, px, py, positions)) {
+      state.hoveredEdge = null; changed = true;
+    }
+  } catch (_) { return; }
+  if (changed) {
+    if (state.hovered == null && state.hoveredEdge == null) hideTooltip();
+    rebuildPointColors(); rebuildLinkColors(); rebuildLinkWidths();
+  }
+}
 
 // ---- Canvas fallback for browser sessions without WebGL2 ---- //
 class CanvasFallbackGraph {
@@ -1168,25 +1323,32 @@ const initialConfig = {
   // interaction continues to work either way.
   hoveredLinkCursor: 'pointer',
   hoveredLinkColor: BRAND_ACCENT,
-  hoveredLinkWidthIncrease: 2,
+  // Our own rebuildLinkColors handles hover emphasis; cosmos's built-in width
+  // bump competes with the node's incident highlight and reads as flicker.
+  hoveredLinkWidthIncrease: 0,
 
   onPointMouseOver: (index) => {
     if (index == null) return;
     showTooltip(index);
-    if (state.hovered !== index) {
+    // Node hover wins: drop any (often incidental) edge hover so the node's
+    // incident-edge highlight is stable rather than fighting a single edge.
+    if (state.hovered !== index || state.hoveredEdge != null) {
       state.hovered = index;
+      state.hoveredEdge = null;
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
     }
   },
   onPointMouseOut: () => {
-    hideTooltip();
     if (state.hovered != null) {
       state.hovered = null;
+      hideTooltip();
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
+    } else {
+      hideTooltip();
     }
   },
   onClick: (index, positionOrEvent, maybeEvent) => {
@@ -1224,18 +1386,22 @@ const initialConfig = {
 
   onLinkMouseOver: (linkIndex) => {
     if (linkIndex == null) return;
-    showEdgeTooltip(linkIndex);
+    // A node hover takes priority — ignore edges incidental to it. The
+    // reconciler clears the node hover once the cursor leaves it, letting a
+    // genuine edge hover take over.
+    if (state.hovered != null) return;
     if (state.hoveredEdge !== linkIndex) {
       state.hoveredEdge = linkIndex;
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
     }
+    showEdgeTooltip(linkIndex);
   },
   onLinkMouseOut: () => {
-    hideTooltip();
     if (state.hoveredEdge != null) {
       state.hoveredEdge = null;
+      hideTooltip();
       rebuildPointColors();
       rebuildLinkColors();
       rebuildLinkWidths();
@@ -1505,6 +1671,32 @@ function pickPointFromEvent(ev) {
 function pointIndexFromEvent(ev) {
   return pickPointFromEvent(ev) ?? state.hovered ?? state.focused;
 }
+// Nearest edge to the event position within a bow-tolerant threshold, or null.
+function edgeIndexFromEvent(ev) {
+  if (isCanvasRenderer || typeof graph.spaceToScreenPosition !== 'function') return null;
+  let positions;
+  try { positions = graph.getPointPositions(); } catch (_) { return null; }
+  if (!positions) return null;
+  const rect = div.getBoundingClientRect();
+  const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < L; i++) {
+    const e = data.links[i];
+    const si = idIndex.get(e.source), ti = idIndex.get(e.target);
+    if (si == null || ti == null) continue;
+    const s = graph.spaceToScreenPosition([positions[si * 2], positions[si * 2 + 1]]);
+    const t = graph.spaceToScreenPosition([positions[ti * 2], positions[ti * 2 + 1]]);
+    if (!s || !t) continue;
+    const dx = t[0] - s[0], dy = t[1] - s[1], len2 = dx * dx + dy * dy;
+    let u = len2 ? ((px - s[0]) * dx + (py - s[1]) * dy) / len2 : 0;
+    u = Math.max(0, Math.min(1, u));
+    const d = Math.hypot(px - (s[0] + u * dx), py - (s[1] + u * dy));
+    const width = Math.max(1, (linkWidths[i] || 1) * (state.edges.widthScale || 1));
+    const bow = state.edges.curved ? Math.min(45, Math.sqrt(len2) * 0.1) : 0;
+    if (d < bestD && d <= width / 2 + 6 + bow) { bestD = d; best = i; }
+  }
+  return best;
+}
 function handleGraphDoubleClick(ev) {
   ev.preventDefault();
   ev.stopPropagation();
@@ -1517,8 +1709,23 @@ function handleGraphDoubleClick(ev) {
 div.addEventListener('dblclick', handleGraphDoubleClick, { capture: true });
 div.addEventListener('contextmenu', (ev) => {
   ev.preventDefault();
-  const index = pointIndexFromEvent(ev);
-  if (index != null) showNodeContextMenu(index, ev.clientX, ev.clientY);
+  // Precise node pick (no focus fallback) so an edge right-click isn't
+  // mis-attributed to a focused node; fall back to the nearest edge.
+  const nodeIdx = pickPointFromEvent(ev);
+  if (nodeIdx != null) { showNodeContextMenu(nodeIdx, ev.clientX, ev.clientY); return; }
+  const edgeIdx = edgeIndexFromEvent(ev);
+  if (edgeIdx != null) showEdgeContextMenu(edgeIdx, ev.clientX, ev.clientY);
+});
+// Safety net: leaving the graph area always clears transient hover + tooltip.
+div.addEventListener('mouseleave', () => {
+  hideTooltip();
+  if (state.hovered != null || state.hoveredEdge != null) {
+    state.hovered = null;
+    state.hoveredEdge = null;
+    rebuildPointColors();
+    rebuildLinkColors();
+    rebuildLinkWidths();
+  }
 });
 
 graph.setPointPositions(pointPositions);
@@ -1687,6 +1894,40 @@ function showNodeContextMenu(index, x, y) {
     traceToUltimateParent(index);
   }));
 
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.edgeSelect.source === index ? 'Set as edge source ✓' : 'Set as edge source',
+    () => setEdgeEndpoint('source', index)));
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.edgeSelect.target === index ? 'Set as edge target ✓' : 'Set as edge target',
+    () => setEdgeEndpoint('target', index)));
+  if (state.edgeSelect.source != null || state.edgeSelect.target != null) {
+    nodeContextMenu.appendChild(contextMenuButton('Clear edge selection', clearEdgeSelect));
+  }
+
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.pinnedNodeLabels.has(index) ? 'Hide label' : 'Show label',
+    () => toggleNodeLabel(index)));
+
+  nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
+  nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
+  nodeContextMenu.style.display = 'block';
+}
+
+// Lightweight context menu for an edge (reuses the node menu container).
+function showEdgeContextMenu(edgeIndex, x, y) {
+  const e = data.links[edgeIndex];
+  if (!e) return;
+  setFocusedEdge(edgeIndex);
+  const s = data.nodes[idIndex.get(e.source)];
+  const t = data.nodes[idIndex.get(e.target)];
+  nodeContextMenu.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = `${s ? s.label : '#' + e.source} —${e.type || 'edge'}→ ${t ? t.label : '#' + e.target}`;
+  nodeContextMenu.appendChild(title);
+  nodeContextMenu.appendChild(contextMenuButton(
+    state.pinnedEdgeLabels.has(edgeIndex) ? 'Hide label' : 'Show label',
+    () => toggleEdgeLabel(edgeIndex)));
   nodeContextMenu.style.left = Math.min(x, innerWidth - 250) + 'px';
   nodeContextMenu.style.top = Math.min(y, innerHeight - 160) + 'px';
   nodeContextMenu.style.display = 'block';
@@ -1698,6 +1939,9 @@ addEventListener('click', (ev) => {
 addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') {
     hideNodeContextMenu();
+    if (state.edgeSelect.source != null || state.edgeSelect.target != null) {
+      clearEdgeSelect();
+    }
     if (state.pairPick.length > 0 || state.trace) {
       clearPairPick();
       clearTrace();
@@ -2022,6 +2266,7 @@ function runSearch(query) {
   }
 
   clearEdgeSearch();          // node and edge search are mutually exclusive
+  clearEdgeSelect();          // a new search deselects any pinned edge
   const matches = [];
   data.nodes.forEach((n, i) => {
     const labelOk = !q || (n.label && n.label.toLowerCase().includes(q));
@@ -2203,6 +2448,7 @@ function runEdgeSearch(query) {
   clearSearch();
   clearPairPick();
   clearTrace();
+  clearEdgeSelect();
   state.focusedEdge = null;
 
   const weightPred = parseWeightQuery(q);
@@ -2252,7 +2498,11 @@ function renderEdgeSearchRemote(edges) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'search-result';
-    btn.textContent = `${ed.source_label} —${ed.edge_type}→ ${ed.target_label}`;
+    btn.innerHTML =
+      `<div class="er-main">${svgEscape(ed.source_label)}` +
+      `<span class="er-arrow">&#8594;</span>${svgEscape(ed.target_label)}</div>` +
+      `<div class="er-type">${svgEscape(ed.edge_type)}</div>`;
+    btn.title = `${ed.source_label} ${ed.edge_type} ${ed.target_label}`;
     btn.onclick = () => {
       const depth = getBfsDepth();
       navigateTo(ed.source_id, depth, { label: `${ed.source_label} depth ${depth}` });
@@ -2365,7 +2615,7 @@ function projectAndUpdateLabels() {
   }
 
   for (let i = 0; i < N; i++) {
-    const showThisLabel = showN || i === pinnedLabel;
+    const showThisLabel = showN || i === pinnedLabel || state.pinnedNodeLabels.has(i);
     nodeLabelEls[i].style.display = showThisLabel ? 'block' : 'none';
     if (!showThisLabel) continue;
     let sp;
@@ -2379,19 +2629,20 @@ function projectAndUpdateLabels() {
       : 'translate(-50%, calc(-100% - 10px))';
     nodeLabelEls[i].style.transform = `translate(${sp[0]}px, ${sp[1]}px) ${labelOffset}`;
   }
-  if (showE) {
-    for (let i = 0; i < L; i++) {
-      const e = data.links[i];
-      const i1 = idIndex.get(e.source), i2 = idIndex.get(e.target);
-      const x = (positions[i1 * 2]     + positions[i2 * 2])     / 2;
-      const y = (positions[i1 * 2 + 1] + positions[i2 * 2 + 1]) / 2;
-      let sp;
-      try { sp = graph.spaceToScreenPosition([x, y]); }
-      catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
-      if (!sp) continue;
-      edgeLabelEls[i].style.transform =
-        `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
-    }
+  for (let i = 0; i < L; i++) {
+    const showThisEdge = showE || state.pinnedEdgeLabels.has(i);
+    edgeLabelEls[i].style.display = showThisEdge ? 'block' : 'none';
+    if (!showThisEdge) continue;
+    const e = data.links[i];
+    const i1 = idIndex.get(e.source), i2 = idIndex.get(e.target);
+    const x = (positions[i1 * 2]     + positions[i2 * 2])     / 2;
+    const y = (positions[i1 * 2 + 1] + positions[i2 * 2 + 1]) / 2;
+    let sp;
+    try { sp = graph.spaceToScreenPosition([x, y]); }
+    catch (_) { labelApiBroken = true; stopLabelLoop(); return; }
+    if (!sp) continue;
+    edgeLabelEls[i].style.transform =
+      `translate(${sp[0]}px, ${sp[1]}px) translate(-50%, -50%)`;
   }
 }
 
@@ -2414,7 +2665,8 @@ function stopLabelLoop() {
 // a halo (seed or found), a pinned label, or the label overlays.
 function labelLoopNeeded() {
   return seedIndex != null || state.focused != null || state.pinnedLabel != null
-      || state.labels.nodes || state.labels.edges;
+      || state.labels.nodes || state.labels.edges
+      || state.pinnedNodeLabels.size > 0 || state.pinnedEdgeLabels.size > 0;
 }
 function syncLabelLoop() {
   if (labelLoopNeeded()) startLabelLoop();
@@ -2424,14 +2676,28 @@ function syncLabelLoop() {
 function setNodeLabelsVisible(show) {
   state.labels.nodes = show;
   nodeLabelEls.forEach((el, i) => {
-    el.style.display = (show || i === state.pinnedLabel) ? 'block' : 'none';
+    el.style.display = (show || i === state.pinnedLabel || state.pinnedNodeLabels.has(i)) ? 'block' : 'none';
   });
   syncLabelLoop();
 }
 function setEdgeLabelsVisible(show) {
   state.labels.edges = show;
-  edgeLabelEls.forEach(el => el.style.display = show ? 'block' : 'none');
+  edgeLabelEls.forEach((el, i) => {
+    el.style.display = (show || state.pinnedEdgeLabels.has(i)) ? 'block' : 'none';
+  });
   syncLabelLoop();
+}
+
+// Right-click label pinning for individual nodes / edges.
+function toggleNodeLabel(i) {
+  if (state.pinnedNodeLabels.has(i)) state.pinnedNodeLabels.delete(i);
+  else state.pinnedNodeLabels.add(i);
+  setNodeLabelsVisible(state.labels.nodes);   // re-applies display incl. pins, keeps loop in sync
+}
+function toggleEdgeLabel(i) {
+  if (state.pinnedEdgeLabels.has(i)) state.pinnedEdgeLabels.delete(i);
+  else state.pinnedEdgeLabels.add(i);
+  setEdgeLabelsVisible(state.labels.edges);
 }
 
 document.getElementById('chk-nodeLabels').addEventListener('change', (ev) => {
